@@ -35,7 +35,7 @@ function test_connect_disconnect(exp)
 end
 
 # Perform first test
-test_connect_disconnect(5)
+#test_connect_disconnect(5)
 
 
 
@@ -91,7 +91,7 @@ function test_send(exp)
 end
 
 # Run second test on a gigabyte of data
-test_send(9)
+#test_send(9)
 
 
 
@@ -102,30 +102,34 @@ function xfer(s, exp)
     xfer_size = 10^exp
     xfer_block = 10^(exp - 4)
 
-    bsent = [0]
-    bread = [0]
+    bsent = 0
+    bread = 0
     
     @sync begin
-        @async begin
-            # read in chunks of xfer_block
-            while bread[1] < xfer_size
+        # Create an asynchronous task that can modify bread properly
+        recv_task = @task begin
+            while bread < xfer_size
                 data = read(s, Uint8, xfer_block)
                 @assert length(data) == xfer_block
-                bread[1] += xfer_block
+                bread += xfer_block
             end
         end
+        Base.sync_add(recv_task)
+        Base.enq_work(recv_task)
         
-        @async begin
+        send_task = @task begin
             # write in chunks of xfer_block
             data = fill!(zeros(Uint8, xfer_block), int8(65))
-            while bsent[1] < xfer_size
+            while bsent < xfer_size
                 write(s, data)
-                bsent[1] += xfer_block
+                bsent += xfer_block
             end
         end
+        Base.sync_add(send_task)
+        Base.enq_work(send_task)
     end
 
-    return (bsent[1], bread[1])
+    return (bsent, bread)
 end
 
 function test_bidirectional(exp)
