@@ -1,53 +1,158 @@
-char(x) = convert(Char, x)
-char(x::FloatingPoint) = char(iround(x))
+# This file is a part of Julia. License is MIT: https://julialang.org/license
 
-integer(x::Char) = int(x)
+struct MalformedCharError <: Exception
+    char::Char
+end
+struct CodePointError <: Exception
+    code::Integer
+end
+@noinline malformed_char(c::Char) = throw(MalformedCharError(c))
+@noinline code_point_err(u::UInt32) = throw(CodePointError(u))
 
-## char promotions ##
+function ismalformed(c::Char)
+    u = reinterpret(UInt32, c)
+    l1 = leading_ones(u) << 3
+    t0 = trailing_zeros(u) & 56
+    (l1 == 8) | (l1 + t0 > 32) |
+    (((u & 0x00c0c0c0) ⊻ 0x00808080) >> t0 != 0)
+end
 
-promote_rule(::Type{Char}, ::Type{Int8})    = Int32
-promote_rule(::Type{Char}, ::Type{Uint8})   = Int32
-promote_rule(::Type{Char}, ::Type{Int16})   = Int32
-promote_rule(::Type{Char}, ::Type{Uint16})  = Int32
-promote_rule(::Type{Char}, ::Type{Int32})   = Int32
-promote_rule(::Type{Char}, ::Type{Uint32})  = Uint32
-promote_rule(::Type{Char}, ::Type{Int64})   = Int64
-promote_rule(::Type{Char}, ::Type{Uint64})  = Uint64
-promote_rule(::Type{Char}, ::Type{Int128})  = Int128
-promote_rule(::Type{Char}, ::Type{Uint128}) = Uint128
+function isoverlong(c::Char)
+    u = reinterpret(UInt32, c)
+    (u >> 24 == 0xc0) | (u >> 21 == 0x0704) | (u >> 20 == 0x0f08)
+end
 
-## character operations & comparisons ##
+function UInt32(c::Char)
+    # TODO: use optimized inline LLVM
+    u = reinterpret(UInt32, c)
+    u < 0x80000000 && return reinterpret(UInt32, u >> 24)
+    l1 = leading_ones(u)
+    t0 = trailing_zeros(u) & 56
+    (l1 == 1) | (8l1 + t0 > 32) |
+    (((u & 0x00c0c0c0) ⊻ 0x00808080) >> t0 != 0) &&
+        malformed_char(c)::Union{}
+    u &= 0xffffffff >> l1
+    u >>= t0
+    (u & 0x0000007f >> 0) | (u & 0x00007f00 >> 2) |
+    (u & 0x007f0000 >> 4) | (u & 0x7f000000 >> 6)
+end
 
-# numeric operations
-# TODO: this should be removed, but needs to be here as long as Char <: Integer
-+(x::Char   , y::Char   ) = int(x)+int(y)
+function Char(u::UInt32)
+    u < 0x80 && return reinterpret(Char, u << 24)
+    u < 0x00200000 || code_point_err(u)::Union{}
+    c = ((u << 0) & 0x0000003f) | ((u << 2) & 0x00003f00) |
+        ((u << 4) & 0x003f0000) | ((u << 6) & 0x3f000000)
+    c = u < 0x00000800 ? (c << 16) | 0xc0800000 :
+        u < 0x00010000 ? (c << 08) | 0xe0808000 :
+                         (c << 00) | 0xf0808080
+    reinterpret(Char, c)
+end
 
-# ordinal operations
-+(x::Char   , y::Integer) = char(int(x)+int(y))
-+(x::Integer, y::Char   ) = y+x
--(x::Char   , y::Char   ) = int(x)-int(y)
--(x::Char   , y::Integer) = char(int(x)-int(y))
+function (T::Union{Type{Int8},Type{UInt8}})(c::Char)
+    i = reinterpret(Int32, c)
+    i ≥ 0 ? ((i >>> 24) % T) : T(UInt32(c))
+end
 
-# bitwise operations
-(~)(x::Char) = char(~uint32(x))
-(&)(x::Char, y::Char) = char(uint32(x) & uint32(y))
-(|)(x::Char, y::Char) = char(uint32(x) | uint32(y))
-($)(x::Char, y::Char) = char(uint32(x) $ uint32(y))
+function Char(b::Union{Int8,UInt8})
+    0 ≤ b ≤ 0x7f ? reinterpret(Char, (b % UInt32) << 24) : Char(UInt32(b))
+end
 
-bswap(x::Char) = char(bswap(uint32(x)))
+convert(::Type{Char}, x::Number) = Char(x)
+convert(::Type{T}, x::Char) where {T<:Number} = T(x)
 
-<<(x::Char, y::Int32)  = uint32(x) << y
->>(x::Char, y::Int32)  = uint32(x) >>> y
->>>(x::Char, y::Int32) = uint32(x) >>> y
+rem(x::Char, ::Type{T}) where {T<:Number} = rem(UInt32(x), T)
 
-< (x::Char, y::Char) = uint32(x) <  uint32(y)
-<=(x::Char, y::Char) = uint32(x) <= uint32(y)
+typemax(::Type{Char}) = reinterpret(Char, typemax(UInt32))
+typemin(::Type{Char}) = reinterpret(Char, typemin(UInt32))
 
-## traits ##
+size(c::Char) = ()
+size(c::Char,d) = convert(Int, d) < 1 ? throw(BoundsError()) : 1
+ndims(c::Char) = 0
+ndims(::Type{Char}) = 0
+length(c::Char) = 1
+endof(c::Char) = 1
+getindex(c::Char) = c
+getindex(c::Char, i::Integer) = i == 1 ? c : throw(BoundsError())
+getindex(c::Char, I::Integer...) = all(x -> x == 1, I) ? c : throw(BoundsError())
+first(c::Char) = c
+last(c::Char) = c
+eltype(::Type{Char}) = Char
 
-sizeof(::Type{Char}) = 4
+start(c::Char) = false
+next(c::Char, state) = (c, true)
+done(c::Char, state) = state
+isempty(c::Char) = false
+in(x::Char, y::Char) = x == y
 
-## printing & showing characters ##
+==(x::Char, y::Char) = reinterpret(UInt32, x) == reinterpret(UInt32, y)
+isless(x::Char, y::Char) = reinterpret(UInt32, x) < reinterpret(UInt32, y)
+hash(x::Char, h::UInt) =
+    hash_uint64(((reinterpret(UInt32, x) + UInt64(0xd4d64234)) << 32) ⊻ UInt64(h))
+widen(::Type{Char}) = Char
 
-print(io::IO, c::Char) = (write(io,c); nothing)
-show(io::IO, c::Char) = (print(io,'\''); print_escaped(io,utf32(c),"'"); print(io,'\''))
+-(x::Char, y::Char) = Int(x) - Int(y)
+-(x::Char, y::Integer) = Char(Int32(x) - Int32(y))
++(x::Char, y::Integer) = Char(Int32(x) + Int32(y))
++(x::Integer, y::Char) = y + x
+
+print(io::IO, c::Char) = (write(io, c); nothing)
+
+const hex_chars = UInt8['0':'9';'a':'z']
+
+function show(io::IO, c::Char)
+    if c <= '\\'
+        b = c == '\0' ? 0x30 :
+            c == '\a' ? 0x61 :
+            c == '\b' ? 0x62 :
+            c == '\t' ? 0x74 :
+            c == '\n' ? 0x6e :
+            c == '\v' ? 0x76 :
+            c == '\f' ? 0x66 :
+            c == '\r' ? 0x72 :
+            c == '\e' ? 0x65 :
+            c == '\'' ? 0x27 :
+            c == '\\' ? 0x5c : 0xff
+        if b != 0xff
+            write(io, 0x27, 0x5c, b, 0x27)
+            return
+        end
+    end
+    if isoverlong(c) || ismalformed(c)
+        write(io, 0x27)
+        u = reinterpret(UInt32, c)
+        while true
+            a = hex_chars[((u >> 28) & 0xf) + 1]
+            b = hex_chars[((u >> 24) & 0xf) + 1]
+            write(io, 0x5c, 'x', a, b)
+            (u <<= 8) == 0 && break
+        end
+        write(io, 0x27)
+    elseif isprint(c)
+        write(io, 0x27, c, 0x27)
+    else # unprintable, well-formed, non-overlong Unicode
+        u = UInt32(c)
+        write(io, 0x27, 0x5c, c <= '\x7f' ? 0x78 : c <= '\uffff' ? 0x75 : 0x55)
+        d = max(2, 8 - (leading_zeros(u) >> 2))
+        while 0 < d
+            write(io, hex_chars[((u >> ((d -= 1) << 2)) & 0xf) + 1])
+        end
+        write(io, 0x27)
+    end
+    return
+end
+
+function show(io::IO, ::MIME"text/plain", c::Char)
+    show(io, c)
+    if !ismalformed(c)
+        print(io, ": ")
+        isoverlong(c) && print(io, "[overlong] ")
+        u = UInt32(c)
+        h = hex(u, u ≤ 0xffff ? 4 : 6)
+        print(io, (isascii(c) ? "ASCII/" : ""), "Unicode U+", h)
+    else
+        print(io, ": Malformed UTF-8")
+    end
+    abr = Unicode.category_abbrev(c)
+    str = Unicode.category_string(c)
+    print(io, " (category ", abr, ": ", str, ")")
+end

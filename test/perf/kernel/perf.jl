@@ -1,11 +1,13 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 include("../perfutil.jl")
 
-abstract List{T}
+abstract type List{T} end
 
-type Nil{T} <: List{T}
+mutable struct Nil{T} <: List{T}
 end
 
-type Cons{T} <: List{T}
+mutable struct Cons{T} <: List{T}
     head::T
     tail::List{T}
 end
@@ -23,7 +25,7 @@ gc()
 
 # issue #1211
 include("ziggurat.jl")
-a = Array(Float64, 1000000)
+a = Vector{Float64}(uninitialized, 1000000)
 @timeit randn_zig!(a) "randn_zig" "Ziggurat gaussian number generator"
 
 # issue #950
@@ -31,13 +33,13 @@ include("gk.jl")
 @timeit gk(350,[0.1]) "gk" "Grigoriadis Khachiyan matrix games"
 
 # issue #942
-s = sparse(ones(280,280));
+s = sparse(fill(1.,280,280))
 @timeit s*s "sparsemul" "Sparse matrix - sparse matrix multiplication"
-s2 = sparse(rand(1:2000,10^5), kron([1:10^4],ones(Int,10)), ones(Int,10^5), 2000, 10^4);
+s2 = sparse(rand(1:2000,10^5), kron([1:10^4;],fill(1,10)), fill(1,10^5), 2000, 10^4)
 @timeit s2*s2' "sparsemul2" "Sparse matrix - matrix multiplication with fill-in"
 
 # issue #938
-x = 1:600000;
+x = 1:600000
 @timeit sparse(x,x,x) "sparserange" "Construction of a sparse array from ranges"
 
 # issue 4707
@@ -47,7 +49,7 @@ v = rand(64^3)
 @timeit A*v "matvec" "Sparse matrix - dense vector multiplication"
 
 # issue #939
-y = [500000:-1:1];
+y = [500000:-1:1;]
 @timeit sortperm(y) "sortperm" "Sorting of a worst-case vector"
 
 # issue #445
@@ -100,12 +102,10 @@ d = randn(len)
 
 @timeit (for n in 1:10; a = arith_vectorized(b,c,d); end) "vectorize" "Vectorized arithmetic"
 
-open("random.csv","w") do io
-    writecsv(io, rand(100000,4))
-end
+writedlm("random.csv", rand(100000, 4), ',')
 
 function parsecsv()
-    for line in EachLine(open("random.csv"))
+    for line in eachline("random.csv")
         split(line, ',')
     end
 end
@@ -117,7 +117,7 @@ rm("random.csv")
 include("json.jl")
 
 _json_data = "{\"web-app\": {
-  \"servlet\": [   
+  \"servlet\": [
     {
       \"servlet-name\": \"cofaxCDS\",
       \"servlet-class\": \"org.cofax.cds.CDSServlet\",
@@ -173,7 +173,7 @@ _json_data = "{\"web-app\": {
     {
       \"servlet-name\": \"cofaxAdmin\",
       \"servlet-class\": \"org.cofax.cds.AdminServlet\"},
- 
+
     {
       \"servlet-name\": \"fileServlet\",
       \"servlet-class\": \"org.cofax.cds.FileServlet\"},
@@ -200,7 +200,7 @@ _json_data = "{\"web-app\": {
     \"cofaxAdmin\": \"/admin/*\",
     \"fileServlet\": \"/static/*\",
     \"cofaxTools\": \"/tools/*\"},
- 
+
   \"taglib\": {
     \"taglib-uri\": \"cofax.tld\",
     \"taglib-location\": \"/WEB-INF/tlds/cofax.tld\"}}}"
@@ -208,7 +208,7 @@ _json_data = "{\"web-app\": {
 @timeit (for n in 1:10; a = parse_json(_json_data); end) "json" "JSON parsing"
 
 include("indexing.jl")
-x = [1:100_000]
+x = [1:100_000;]
 y = filter(iseven, 1:length(x))
 logical_y = map(iseven, 1:length(x))
 
@@ -217,3 +217,4 @@ logical_y = map(iseven, 1:length(x))
 @timeit (for n=1:100 add1!(x,logical_y) end) "add1_logical" "Increment x_i if y_i is true"
 @timeit (for n=1:100 devec_add1_logical!(x,logical_y) end) "devec_add1_logical" "Devectorized increment x_i if y_i is true"
 
+maxrss("kernel")

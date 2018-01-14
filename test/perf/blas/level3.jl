@@ -1,10 +1,12 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 # gemm on various size matrices
 
 function matmultest(n, iter)
     a = rand(n,n)
     b = similar(a)
     for i=1:iter
-        A_mul_B!(b, a, a)
+        Base.LinAlg.mul!(b, a, a)
     end
     b
 end

@@ -3,12 +3,12 @@
 
 NEWS = get(ARGS, 1, "NEWS.md")
 
-s = readall(NEWS)
+s = read(NEWS, String)
 
 s = s[1:match(r"\[#[0-9]+\]:", s).offset-1];
 
 footnote(n) = "[#$n]: https://github.com/JuliaLang/julia/issues/$n"
-N = map(m -> parseint(m.captures[1]), eachmatch(r"\[#([0-9]+)\]", s))
+N = map(m -> parse(Int,m.captures[1]), eachmatch(r"\[#([0-9]+)\]", s))
 foots = join(map(footnote, sort!(unique(N))), "\n")
 
 open(NEWS, "w") do f

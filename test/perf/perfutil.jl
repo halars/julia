@@ -1,4 +1,9 @@
-const ntrials = 5
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
+using Printf
+
+const mintrials = 5
+const mintime = 2000.0
 print_output = isempty(ARGS)
 codespeed = length(ARGS) > 0 && ARGS[1] == "codespeed"
 
@@ -18,13 +23,13 @@ if codespeed
     csdata["project"] = "Julia"
     csdata["branch"] = Base.GIT_VERSION_INFO.branch
     csdata["executable"] = ENV["JULIA_FLAVOR"]
-    csdata["environment"] = chomp(readall(`hostname`))
+    csdata["environment"] = chomp(read(`hostname`, String))
     csdata["result_date"] = join( split(Base.GIT_VERSION_INFO.date_string)[1:2], " " )    #Cut the timezone out
 end
 
 # Takes in the raw array of values in vals, along with the benchmark name, description, unit and whether less is better
 function submit_to_codespeed(vals,name,desc,unit,test_group,lessisbetter=true)
-    # Points to the server 
+    # Points to the server
     codespeed_host = "julia-codespeed.csail.mit.edu"
 
     csdata["benchmark"] = name
@@ -38,16 +43,20 @@ function submit_to_codespeed(vals,name,desc,unit,test_group,lessisbetter=true)
     csdata["lessisbetter"] = lessisbetter
 
     println( "$name: $(mean(vals))" )
-    ret = post( "http://$codespeed_host/result/add/json/", {"json" => json([csdata])} )
+    ret = post( "http://$codespeed_host/result/add/json/", Dict("json" => json([csdata])) )
     println( json([csdata]) )
     if ret.http_code != 200 && ret.http_code != 202
-        error("Error submitting $name [HTTP code $(ret.http_code)], dumping headers and text: $(ret.headers)\n$(bytestring(ret.body))\n\n")
+        error("Error submitting $name [HTTP code $(ret.http_code)], dumping headers and text: $(ret.headers)\n$(String(ret.body))\n\n")
         return false
     end
     return true
 end
 
 macro output_timings(t,name,desc,group)
+    t = esc(t)
+    name = esc(name)
+    desc = esc(desc)
+    group = esc(group)
     quote
         # If we weren't given anything for the test group, infer off of file path!
         test_group = length($group) == 0 ? basename(dirname(Base.source_path())) : $group[1]
@@ -56,28 +65,34 @@ macro output_timings(t,name,desc,group)
         elseif print_output
             @printf "julia,%s,%f,%f,%f,%f\n" $name minimum($t) maximum($t) mean($t) std($t)
         end
-        gc()        
+        gc()
     end
 end
 
 macro timeit(ex,name,desc,group...)
     quote
-        t = zeros(ntrials)
-        for i=0:ntrials
-            e = 1000*(@elapsed $(esc(ex)))
-            if i > 0
-                # warm up on first iteration
-                t[i] = e
+        let
+            t = Float64[]
+            tot = 0.0
+            i = 0
+            while i < mintrials || tot < mintime
+                e = 1000*(@elapsed $(esc(ex)))
+                tot += e
+                if i > 0
+                    # warm up on first iteration
+                    push!(t, e)
+                end
+                i += 1
             end
+            @output_timings t $(esc(name)) $(esc(desc)) $(esc(group))
         end
-        @output_timings t $name $desc $group
     end
 end
 
 macro timeit_init(ex,init,name,desc,group...)
     quote
-        t = zeros(ntrials)
-        for i=0:ntrials
+        t = zeros(mintrials)
+        for i=0:mintrials
             $(esc(init))
             e = 1000*(@elapsed $(esc(ex)))
             if i > 0
@@ -85,7 +100,20 @@ macro timeit_init(ex,init,name,desc,group...)
                 t[i] = e
             end
         end
-        @output_timings t $name $desc $group
+        @output_timings t $(esc(name)) $(esc(desc)) $(esc(group))
+    end
+end
+
+function maxrss(name)
+    # FIXME: call uv_getrusage instead here
+    @static if Sys.islinux()
+        rus = Vector{Int64}(uninitialized, div(144,8))
+        fill!(rus, 0x0)
+        res = ccall(:getrusage, Int32, (Int32, Ptr{Cvoid}), 0, rus)
+        if res == 0
+            mx = rus[5]/1024
+            @printf "julia,%s.mem,%f,%f,%f,%f\n" name mx mx mx 0
+        end
     end
 end
 

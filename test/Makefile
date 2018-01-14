@@ -1,31 +1,29 @@
-JULIAHOME = $(abspath ..)
-include ../Make.inc
+SRCDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+JULIAHOME := $(abspath $(SRCDIR)/..)
+BUILDDIR := .
+STDLIBDIR := $(abspath $(JULIAHOME)/stdlib)
+include $(JULIAHOME)/Make.inc
+# TODO: this Makefile ignores BUILDDIR, except for computing JULIA_EXECUTABLE
 
-TESTS = all core keywordargs numbers strings unicode collections hashing	\
-	remote iobuffer arrayops reduce reducedim \
-	simdloop linalg blas fft dsp sparse bitarray random \
-	math functional bigint sorting statistics spawn parallel arpack file	\
-	git pkg resolve suitesparse complex version pollfd mpfr	broadcast       \
-	socket floatapprox priorityqueue readdlm regex float16 combinatorics    \
-	sysinfo rounding ranges mod2pi euler show lineedit      \
-	replcompletions backtrace repl test goto
+TESTGROUPS = linalg sparse unicode strings dates
+TESTS = all stdlib $(TESTGROUPS) \
+        $(patsubst $(STDLIBDIR)/%/,%,$(dir $(wildcard $(STDLIBDIR)/*/.))) \
+		$(filter-out TestHelpers runtests testdefs, \
+			$(patsubst $(SRCDIR)/%.jl,%,$(wildcard $(SRCDIR)/*.jl))) \
+		$(foreach group,$(TESTGROUPS), \
+			$(patsubst $(SRCDIR)/%.jl,%,$(wildcard $(SRCDIR)/$(group)/*.jl)))
+# run `make print-TESTS` to see a list of all tests that can be run
 
 default: all
 
-$(TESTS) ::
-	@$(call PRINT_JULIA, $(call spawn,$(JULIA_EXECUTABLE)) --check-bounds=yes -f ./runtests.jl $@)
+$(TESTS):
+	@cd $(SRCDIR) && \
+	$(call PRINT_JULIA, $(call spawn,$(JULIA_EXECUTABLE)) --check-bounds=yes --startup-file=no ./runtests.jl $@)
 
 perf:
-	@$(MAKE) -C perf all
+	@$(MAKE) -C $(SRCDIR)/perf all
 
 clean:
 	@$(MAKE) -C perf $@
-	-rm -f libccalltest.$(SHLIB_EXT) ccalltest
 
 .PHONY: $(TESTS) perf clean
-
-libccalltest.$(SHLIB_EXT): ccalltest.c
-	$(CC) $(CFLAGS) $(DEBUGFLAGS) -O3 $< -fPIC -shared -o $@ $(LDFLAGS) -DCC=$(CC)
-
-ccalltest: ccalltest.c
-	$(CC) $(CFLAGS) $(DEBUGFLAGS) -O3 $< -o $@ $(LDFLAGS) -DCC=$(CC)

@@ -1,9 +1,57 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%  Main function. All the tests are run here.           %%
+%%  The functions declarations can be found at the end.  %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 function perf()
 
-warning off;
-if exist('OCTAVE_VERSION') == 0
-    maxNumCompThreads(1);
+	warning off;
+	
+	f = fib(20);
+	assert(f == 6765)
+	timeit('recursion_fibonacci', @fib, 20)
+	
+	timeit('parse_integers', @parseintperf, 1000)
+	
+	%% array constructors %%
+
+	%o = ones(200,200);
+	%assert(all(o) == 1)
+	%timeit('ones', @ones, 200, 200)
+	
+	%assert(all(matmul(o) == 200))
+	%timeit('AtA', @matmul, o)
+	
+	mandel(complex(-.53,.68));
+	assert(sum(sum(mandelperf(true))) == 14791)
+	timeit('userfunc_mandelbrot', @mandelperf, true)
+	
+	assert(issorted(sortperf(5000)))
+	timeit('recursion_quicksort', @sortperf, 5000)
+	
+	s = pisum(true);
+	assert(abs(s-1.644834071848065) < 1e-12);
+	timeit('iteration_pi_sum',@pisum, true)
+	
+	%s = pisumvec(true);
+	%assert(abs(s-1.644834071848065) < 1e-12);
+	%timeit('pi_sum_vec',@pisumvec, true)
+	
+	[s1, s2] = randmatstat(1000);
+	assert(round(10*s1) > 5 && round(10*s1) < 10);
+	timeit('matrix_statistics', @randmatstat, 1000)
+	
+	timeit('matrix_multiply', @randmatmul, 1000);
+	
+	printfd(1)
+	timeit('print_to_file', @printfd, 100000)
+
 end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%  Functions declarations  %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 function assert(bool)
    if ~bool
@@ -39,43 +87,34 @@ function f = fib(n)
     end
 end
 
-f = fib(20);
-assert(f == 6765)
-timeit('fib', @fib, 20)
-
 %% parse int %%
 
 function n = parseintperf(t)
     for i = 1:t
         n = randi([0,2^32-1],1,'uint32');
-        s = dec2hex(n);
-        m = hex2dec(s);
+        s = sprintf('%08x',n);
+        m = sscanf(s,'%x');
         assert(m == n);
     end
 end
-timeit('parse_int', @parseintperf, 1000)
-
-%% array constructors %%
-
-%o = ones(200,200);
-%assert(all(o) == 1)
-% timeit('ones', @ones, 200, 200)
 
 %% matmul and transpose %%
 
 %function oo = matmul(o)
 %    oo = o * o.';
 %end
-%assert(all(matmul(o) == 200))
-% timeit('AtA', @matmul, o)
 
 %% mandelbrot set: complex arithmetic and comprehensions %%
+
+function r = abs2(z)
+    r = real(z)*real(z) + imag(z)*imag(z);
+end
 
 function n = mandel(z)
     n = 0;
     c = z;
     for n=0:79
-        if abs(z)>2
+        if abs2(z)>4
             return
         end
         z = z^2+c;
@@ -83,20 +122,16 @@ function n = mandel(z)
     n = 80;
 end
 
-mandel(complex(-.53,.68));
-
 function M = mandelperf(ignore)
-  M = zeros(length(-2.0:.1:0.5), length(-1:.1:1));
-  count = 1;
-  for r = -2:0.1:0.5
-    for i = -1:.1:1
-      M(count) = mandel(complex(r,i));
-      count = count + 1;
+    x=-2.0:.1:0.5;
+    y=-1:.1:1;
+    M=zeros(length(y),length(x));
+    for r=1:size(M,1) 
+        for c=1:size(M,2)
+           M(r,c) = mandel(x(c)+y(r)*i);
+        end
     end
-  end
 end
-assert(sum(sum(mandelperf(true))) == 14791)
-timeit('mandel', @mandelperf, true)
 
 %% numeric vector quicksort %%
 
@@ -130,8 +165,6 @@ function v = sortperf(n)
     v = rand(n,1);
     v = qsort(v);
 end
-assert(issorted(sortperf(5000)))
-timeit('quicksort', @sortperf, 5000)
 
 %% slow pi series %%
 
@@ -145,22 +178,14 @@ function sum = pisum(ignore)
     end
 end
 
-s = pisum(true);
-assert(abs(s-1.644834071848065) < 1e-12);
-timeit('pi_sum',@pisum, true)
-
 %% slow pi series, vectorized %%
 
 function s = pisumvec(ignore)
-    a = [1:10000]
+    a = [1:10000];
     for j=1:500
         s = sum( 1./(a.^2));
     end
 end
-
-%s = pisumvec(true);
-%assert(abs(s-1.644834071848065) < 1e-12);
-%timeit('pi_sum_vec',@pisumvec, true)
 
 %% random matrix statistics %%
 
@@ -182,10 +207,6 @@ function [s1, s2] = randmatstat(t)
     s2 = std(w)/mean(w);
 end
 
-[s1, s2] = randmatstat(1000);
-assert(round(10*s1) > 5 && round(10*s1) < 10);
-timeit('rand_mat_stat', @randmatstat, 1000)
-
 function t = mytranspose(x)
     [m, n] = size(x);
     t = zeros(n, m);
@@ -202,19 +223,12 @@ function X = randmatmul(n)
     X = rand(n,n)*rand(n,n);
 end
 
-timeit('rand_mat_mul', @randmatmul, 1000);
-
 %% printf %%
 
 function printfd(n)
     f = fopen('/dev/null','w');
     for i = 1:n
-        fprintf(f, '%d %d\n', i, i);
+        fprintf(f, '%d %d\n', i, i + 1);
     end
     fclose(f);
-end
-
-printfd(1)
-timeit('printfd', @printfd, 100000)
-
 end

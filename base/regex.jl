@@ -1,97 +1,128 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 ## object-oriented Regex interface ##
 
 include("pcre.jl")
 
-const DEFAULT_OPTS = PCRE.JAVASCRIPT_COMPAT | PCRE.UTF8 | PCRE.NO_UTF8_CHECK
+const DEFAULT_COMPILER_OPTS = PCRE.UTF | PCRE.NO_UTF_CHECK | PCRE.ALT_BSUX
+const DEFAULT_MATCH_OPTS = PCRE.NO_UTF_CHECK
 
-type Regex
-    pattern::ByteString
-    options::Uint32
-    regex::Ptr{Void}
-    extra::Ptr{Void}
-    ovec::Vector{Int32}
+mutable struct Regex
+    pattern::String
+    compile_options::UInt32
+    match_options::UInt32
+    regex::Ptr{Cvoid}
+    extra::Ptr{Cvoid}
+    ovec::Vector{Csize_t}
+    match_data::Ptr{Cvoid}
 
-
-    function Regex(pattern::String, options::Integer)
-        pattern = bytestring(pattern)
-        options = uint32(options)
-        if (options & ~PCRE.OPTIONS_MASK) != 0
-            error("invalid regex options: $options")
+    function Regex(pattern::AbstractString, compile_options::Integer,
+                   match_options::Integer)
+        pattern = String(pattern)
+        compile_options = UInt32(compile_options)
+        match_options = UInt32(match_options)
+        if (compile_options & ~PCRE.COMPILE_MASK) != 0
+            throw(ArgumentError("invalid regex compile options: $compile_options"))
         end
-        re = compile(new(pattern, options, C_NULL, C_NULL, Array(Int32, 0)))
-        finalizer(re,
-            function(re::Regex)
-                re.extra != C_NULL && PCRE.free_study(re.extra)
-                re.regex != C_NULL && PCRE.free(re.regex)
-            end)
+        if (match_options & ~PCRE.EXECUTE_MASK) !=0
+            throw(ArgumentError("invalid regex match options: $match_options"))
+        end
+        re = compile(new(pattern, compile_options, match_options, C_NULL,
+                         C_NULL, Csize_t[], C_NULL))
+        finalizer(re) do re
+            re.regex == C_NULL || PCRE.free_re(re.regex)
+            re.match_data == C_NULL || PCRE.free_match_data(re.match_data)
+        end
         re
     end
 end
 
-function Regex(pattern::String, flags::String)
-    options = DEFAULT_OPTS
+function Regex(pattern::AbstractString, flags::AbstractString)
+    options = DEFAULT_COMPILER_OPTS
     for f in flags
         options |= f=='i' ? PCRE.CASELESS  :
                    f=='m' ? PCRE.MULTILINE :
                    f=='s' ? PCRE.DOTALL    :
                    f=='x' ? PCRE.EXTENDED  :
-                   error("unknown regex flag: $f")
+                   throw(ArgumentError("unknown regex flag: $f"))
     end
-    Regex(pattern, options)
+    Regex(pattern, options, DEFAULT_MATCH_OPTS)
 end
-Regex(pattern::String) = Regex(pattern, DEFAULT_OPTS)
+Regex(pattern::AbstractString) = Regex(pattern, DEFAULT_COMPILER_OPTS, DEFAULT_MATCH_OPTS)
 
 function compile(regex::Regex)
     if regex.regex == C_NULL
-        regex.regex = PCRE.compile(regex.pattern, regex.options & PCRE.COMPILE_MASK)
-        regex.extra = PCRE.study(regex.regex, PCRE.STUDY_JIT_COMPILE)
-        ncap  = PCRE.info(regex.regex, regex.extra,
-                          PCRE.INFO_CAPTURECOUNT, Int32)
-        resize!(regex.ovec, 3(ncap+1))
+        regex.regex = PCRE.compile(regex.pattern, regex.compile_options)
+        PCRE.jit_compile(regex.regex)
+        regex.match_data = PCRE.create_match_data(regex.regex)
+        regex.ovec = PCRE.get_ovec(regex.match_data)
     end
     regex
 end
 
-macro r_str(pattern, flags...) Regex(pattern, flags...) end
-macro r_mstr(pattern, flags...) Regex(pattern, flags...) end
+"""
+    @r_str -> Regex
 
-copy(r::Regex) = r
+Construct a regex, such as `r"^[a-z]*\$"`. The regex also accepts one or more flags, listed
+after the ending quote, to change its behaviour:
+
+- `i` enables case-insensitive matching
+- `m` treats the `^` and `\$` tokens as matching the start and end of individual lines, as
+  opposed to the whole string.
+- `s` allows the `.` modifier to match newlines.
+- `x` enables "comment mode": whitespace is enabled except when escaped with `\\`, and `#`
+  is treated as starting a comment.
+
+For example, this regex has all three flags enabled:
+
+```jldoctest
+julia> match(r"a+.*b+.*?d\$"ism, "Goodbye,\\nOh, angry,\\nBad world\\n")
+RegexMatch("angry,\\nBad world")
+```
+"""
+macro r_str(pattern, flags...) Regex(pattern, flags...) end
 
 function show(io::IO, re::Regex)
     imsx = PCRE.CASELESS|PCRE.MULTILINE|PCRE.DOTALL|PCRE.EXTENDED
-    if (re.options & ~imsx) == DEFAULT_OPTS
+    opts = re.compile_options
+    if (opts & ~imsx) == DEFAULT_COMPILER_OPTS
         print(io, 'r')
         print_quoted_literal(io, re.pattern)
-        if (re.options & PCRE.CASELESS ) != 0; print(io, 'i'); end
-        if (re.options & PCRE.MULTILINE) != 0; print(io, 'm'); end
-        if (re.options & PCRE.DOTALL   ) != 0; print(io, 's'); end
-        if (re.options & PCRE.EXTENDED ) != 0; print(io, 'x'); end
+        if (opts & PCRE.CASELESS ) != 0; print(io, 'i'); end
+        if (opts & PCRE.MULTILINE) != 0; print(io, 'm'); end
+        if (opts & PCRE.DOTALL   ) != 0; print(io, 's'); end
+        if (opts & PCRE.EXTENDED ) != 0; print(io, 'x'); end
     else
         print(io, "Regex(")
         show(io, re.pattern)
         print(io, ',')
-        show(io, re.options)
+        show(io, opts)
         print(io, ')')
     end
 end
 
-# TODO: map offsets into non-ByteStrings back to original indices.
+# TODO: map offsets into strings in other encodings back to original indices.
 # or maybe it's better to just fail since that would be quite slow
 
-immutable RegexMatch
-    match::SubString{UTF8String}
-    captures::Vector{Union(Nothing,SubString{UTF8String})}
+struct RegexMatch
+    match::SubString{String}
+    captures::Vector{Union{Nothing,SubString{String}}}
     offset::Int
     offsets::Vector{Int}
+    regex::Regex
 end
 
 function show(io::IO, m::RegexMatch)
     print(io, "RegexMatch(")
     show(io, m.match)
+    idx_to_capture_name = PCRE.capture_names(m.regex.regex)
     if !isempty(m.captures)
         print(io, ", ")
         for i = 1:length(m.captures)
-            print(io, i, "=")
+            # If the capture group is named, show the name.
+            # Otherwise show its index.
+            capture_name = get(idx_to_capture_name, i, i)
+            print(io, capture_name, "=")
             show(io, m.captures[i])
             if i < length(m.captures)
                 print(io, ", ")
@@ -101,59 +132,116 @@ function show(io::IO, m::RegexMatch)
     print(io, ")")
 end
 
-function ismatch(r::Regex, s::String, offset::Integer=0)
+# Capture group extraction
+getindex(m::RegexMatch, idx::Integer) = m.captures[idx]
+function getindex(m::RegexMatch, name::Symbol)
+    idx = PCRE.substring_number_from_name(m.regex.regex, name)
+    idx <= 0 && error("no capture group named $name found in regex")
+    m[idx]
+end
+getindex(m::RegexMatch, name::AbstractString) = m[Symbol(name)]
+
+function contains(s::AbstractString, r::Regex, offset::Integer=0)
     compile(r)
-    return PCRE.exec(r.regex, r.extra, bytestring(s), offset, r.options & PCRE.EXECUTE_MASK,
-                     r.ovec)
+    return PCRE.exec(r.regex, String(s), offset, r.match_options,
+                     r.match_data)
 end
 
-function ismatch(r::Regex, s::SubString, offset::Integer=0)
+function contains(s::SubString, r::Regex, offset::Integer=0)
     compile(r)
-    return PCRE.exec(r.regex, r.extra, s, offset, r.options & PCRE.EXECUTE_MASK,
-                  r.ovec)
+    return PCRE.exec(r.regex, s, offset, r.match_options,
+                     r.match_data)
 end
 
-function match(re::Regex, str::UTF8String, idx::Integer, add_opts::Uint32=uint32(0))
-    opts = re.options & PCRE.EXECUTE_MASK | add_opts
+(r::Regex)(s) = contains(s, r)
+
+"""
+    match(r::Regex, s::AbstractString[, idx::Integer[, addopts]])
+
+Search for the first match of the regular expression `r` in `s` and return a `RegexMatch`
+object containing the match, or nothing if the match failed. The matching substring can be
+retrieved by accessing `m.match` and the captured sequences can be retrieved by accessing
+`m.captures` The optional `idx` argument specifies an index at which to start the search.
+
+# Examples
+```jldoctest
+julia> rx = r"a(.)a"
+r"a(.)a"
+
+julia> m = match(rx, "cabac")
+RegexMatch("aba", 1="b")
+
+julia> m.captures
+1-element Array{Union{Nothing, SubString{String}},1}:
+ "b"
+
+julia> m.match
+"aba"
+
+julia> match(rx, "cabac", 3) == nothing
+true
+```
+"""
+function match end
+
+function match(re::Regex, str::Union{SubString{String}, String}, idx::Integer, add_opts::UInt32=UInt32(0))
     compile(re)
-    if !PCRE.exec(re.regex, re.extra, str, idx-1, opts, re.ovec)
+    opts = re.match_options | add_opts
+    if !PCRE.exec(re.regex, str, idx-1, opts, re.match_data)
         return nothing
     end
-    n = length(re.ovec)/3 - 1
-    mat = SubString(str, re.ovec[1]+1, re.ovec[2])
-    cap = Union(Nothing,SubString{UTF8String})[
-            re.ovec[2i+1] < 0 ? nothing : SubString(str, re.ovec[2i+1]+1, re.ovec[2i+2]) for i=1:n ]
-    off = Int[ re.ovec[2i+1]::Int32+1 for i=1:n ]
-    RegexMatch(mat, cap, re.ovec[1]+1, off)
+    ovec = re.ovec
+    n = div(length(ovec),2) - 1
+    mat = SubString(str, ovec[1]+1, prevind(str, ovec[2]+1))
+    cap = Union{Nothing,SubString{String}}[ovec[2i+1] == PCRE.UNSET ? nothing :
+                                        SubString(str, ovec[2i+1]+1,
+                                                  prevind(str, ovec[2i+2]+1)) for i=1:n]
+    off = Int[ ovec[2i+1]+1 for i=1:n ]
+    RegexMatch(mat, cap, ovec[1]+1, off, re)
 end
 
-match(re::Regex, str::Union(ByteString,SubString), idx::Integer, add_opts::Uint32=uint32(0)) =
-    match(re, utf8(str), idx, add_opts)
+match(r::Regex, s::AbstractString) = match(r, s, start(s))
+match(r::Regex, s::AbstractString, i::Integer) = throw(ArgumentError(
+    "regex matching is only available for the String type; use String(s) to convert"
+))
 
-match(r::Regex, s::String) = match(r, s, start(s))
-match(r::Regex, s::String, i::Integer) =
-    error("regex matching is only available for bytestrings; use bytestring(s) to convert")
+"""
+    matchall(r::Regex, s::AbstractString[, overlap::Bool=false]) -> Vector{AbstractString}
 
-function matchall(re::Regex, str::UTF8String, overlap::Bool=false)
+Return a vector of the matching substrings from [`eachmatch`](@ref).
+
+
+# Examples
+```jldoctest
+julia> rx = r"a.a"
+r"a.a"
+
+julia> matchall(rx, "a1a2a3a")
+2-element Array{SubString{String},1}:
+ "a1a"
+ "a3a"
+
+julia> matchall(rx, "a1a2a3a", true)
+3-element Array{SubString{String},1}:
+ "a1a"
+ "a2a"
+ "a3a"
+```
+"""
+function matchall(re::Regex, str::String, overlap::Bool=false)
     regex = compile(re).regex
-    extra = re.extra
-    n = length(str.data)
-    matches = SubString{UTF8String}[]
-    offset = int32(0)
-    opts = re.options & PCRE.EXECUTE_MASK
+    n = sizeof(str)
+    matches = SubString{String}[]
+    offset = UInt32(0)
+    opts = re.match_options
     opts_nonempty = opts | PCRE.ANCHORED | PCRE.NOTEMPTY_ATSTART
     prevempty = false
-    ovec = Array(Int32, 3)
+    ovec = re.ovec
     while true
-        result = ccall((:pcre_exec, :libpcre), Int32,
-                       (Ptr{Void}, Ptr{Void}, Ptr{Uint8}, Int32,
-                       Int32, Int32, Ptr{Int32}, Int32),
-                       regex, extra, str, n,
-                       offset, prevempty ? opts_nonempty : opts, ovec, 3)
-
-        if result < 0
+        result = PCRE.exec(regex, str, offset, prevempty ? opts_nonempty : opts, re.match_data)
+        if !result
             if prevempty && offset < n
-                offset = int32(nextind(str, offset + 1) - 1)
+                offset = UInt32(nextind(str, offset + 1) - 1)
                 prevempty = false
                 continue
             else
@@ -165,7 +253,7 @@ function matchall(re::Regex, str::UTF8String, overlap::Bool=false)
         prevempty = offset == ovec[2]
         if overlap
             if !prevempty
-                offset = int32(nextind(str, offset + 1) - 1)
+                offset = UInt32(ovec[1]+1)
             end
         else
             offset = ovec[2]
@@ -174,35 +262,125 @@ function matchall(re::Regex, str::UTF8String, overlap::Bool=false)
     matches
 end
 
-matchall(re::Regex, str::Union(ByteString,SubString), overlap::Bool=false) =
-    matchall(re, utf8(str), overlap)
+matchall(re::Regex, str::SubString, overlap::Bool=false) =
+    matchall(re, String(str), overlap)
 
-function search(str::Union(ByteString,SubString), re::Regex, idx::Integer)
+# TODO: return only start index and update deprecation
+function findnext(re::Regex, str::Union{String,SubString}, idx::Integer)
     if idx > nextind(str,endof(str))
         throw(BoundsError())
     end
-    opts = re.options & PCRE.EXECUTE_MASK
+    opts = re.match_options
     compile(re)
-    PCRE.exec(re.regex, re.extra, str, idx-1, opts, re.ovec) ?
-        ((re.ovec[1]+1):prevind(str,re.ovec[2]+1)) : (0:-1)
+    PCRE.exec(re.regex, str, idx-1, opts, re.match_data) ?
+        ((Int(re.ovec[1])+1):prevind(str,Int(re.ovec[2])+1)) : (0:-1)
 end
-search(s::String, r::Regex, idx::Integer) =
-    error("regex search is only available for bytestrings; use bytestring(s) to convert")
-search(s::String, r::Regex) = search(s,r,start(s))
+findnext(r::Regex, s::AbstractString, idx::Integer) = throw(ArgumentError(
+    "regex search is only available for the String type; use String(s) to convert"
+))
+findfirst(r::Regex, s::AbstractString) = findnext(r,s,start(s))
 
-immutable RegexMatchIterator
+struct SubstitutionString{T<:AbstractString} <: AbstractString
+    string::T
+end
+
+ncodeunits(s::SubstitutionString) = ncodeunits(s.string)
+codeunit(s::SubstitutionString) = codeunit(s.string)
+codeunit(s::SubstitutionString, i::Integer) = codeunit(s.string, i)
+isvalid(s::SubstitutionString, i::Integer) = isvalid(s.string, i)
+next(s::SubstitutionString, i::Integer) = next(s.string, i)
+
+function show(io::IO, s::SubstitutionString)
+    print(io, "s")
+    show(io, s.string)
+end
+
+macro s_str(string) SubstitutionString(string) end
+
+replace_err(repl) = error("Bad replacement string: $repl")
+
+function _write_capture(io, re, group)
+    len = PCRE.substring_length_bynumber(re.match_data, group)
+    ensureroom(io, len+1)
+    PCRE.substring_copy_bynumber(re.match_data, group,
+        pointer(io.data, io.ptr), len+1)
+    io.ptr += len
+    io.size = max(io.size, io.ptr - 1)
+end
+
+function _replace(io, repl_s::SubstitutionString, str, r, re)
+    SUB_CHAR = '\\'
+    GROUP_CHAR = 'g'
+    LBRACKET = '<'
+    RBRACKET = '>'
+    repl = repl_s.string
+    i = start(repl)
+    e = endof(repl)
+    while i <= e
+        if repl[i] == SUB_CHAR
+            next_i = nextind(repl, i)
+            next_i > e && replace_err(repl)
+            if repl[next_i] == SUB_CHAR
+                write(io, SUB_CHAR)
+                i = nextind(repl, next_i)
+            elseif isdigit(repl[next_i])
+                group = parse(Int, repl[next_i])
+                i = nextind(repl, next_i)
+                while i <= e
+                    if isdigit(repl[i])
+                        group = 10group + parse(Int, repl[i])
+                        i = nextind(repl, i)
+                    else
+                        break
+                    end
+                end
+                _write_capture(io, re, group)
+            elseif repl[next_i] == GROUP_CHAR
+                i = nextind(repl, next_i)
+                if i > e || repl[i] != LBRACKET
+                    replace_err(repl)
+                end
+                i = nextind(repl, i)
+                i > e && replace_err(repl)
+                groupstart = i
+                while repl[i] != RBRACKET
+                    i = nextind(repl, i)
+                    i > e && replace_err(repl)
+                end
+                #  TODO: avoid this allocation
+                groupname = SubString(repl, groupstart, prevind(repl, i))
+                if all(isdigit, groupname)
+                    _write_capture(io, re, parse(Int, groupname))
+                else
+                    group = PCRE.substring_number_from_name(re.regex, groupname)
+                    group < 0 && replace_err("Group $groupname not found in regex $re")
+                    _write_capture(io, re, group)
+                end
+                i = nextind(repl, i)
+            else
+                replace_err(repl)
+            end
+        else
+            write(io, repl[i])
+            i = nextind(repl, i)
+        end
+    end
+end
+
+struct RegexMatchIterator
     regex::Regex
-    string::UTF8String
+    string::String
     overlap::Bool
 
-    function RegexMatchIterator(regex::Regex, string::String, ovr::Bool=false)
+    function RegexMatchIterator(regex::Regex, string::AbstractString, ovr::Bool=false)
         new(regex, string, ovr)
     end
 end
 compile(itr::RegexMatchIterator) = (compile(itr.regex); itr)
-eltype(itr::RegexMatchIterator) = RegexMatch
-start(itr::RegexMatchIterator) = match(itr.regex, itr.string, 1, uint32(0))
-done(itr::RegexMatchIterator, prev_match) = (prev_match == nothing)
+eltype(::Type{RegexMatchIterator}) = RegexMatch
+start(itr::RegexMatchIterator) = match(itr.regex, itr.string, 1, UInt32(0))
+done(itr::RegexMatchIterator, prev_match) = (prev_match === nothing)
+IteratorSize(::Type{RegexMatchIterator}) = SizeUnknown()
 
 # Assumes prev_match is not nothing
 function next(itr::RegexMatchIterator, prev_match)
@@ -218,13 +396,13 @@ function next(itr::RegexMatchIterator, prev_match)
         offset = prev_match.offset + endof(prev_match.match)
     end
 
-    opts_nonempty = uint32(PCRE.ANCHORED | PCRE.NOTEMPTY_ATSTART)
+    opts_nonempty = UInt32(PCRE.ANCHORED | PCRE.NOTEMPTY_ATSTART)
     while true
         mat = match(itr.regex, itr.string, offset,
-                    prevempty ? opts_nonempty : uint32(0))
+                    prevempty ? opts_nonempty : UInt32(0))
 
         if mat === nothing
-            if prevempty && offset <= length(itr.string.data)
+            if prevempty && offset <= sizeof(itr.string)
                 offset = nextind(itr.string, offset)
                 prevempty = false
                 continue
@@ -238,30 +416,50 @@ function next(itr::RegexMatchIterator, prev_match)
     (prev_match, nothing)
 end
 
-function eachmatch(re::Regex, str::String, ovr::Bool=false)
+function eachmatch(re::Regex, str::AbstractString, ovr::Bool)
     RegexMatchIterator(re,str,ovr)
 end
 
-eachmatch(re::Regex, str::String) = RegexMatchIterator(re,str)
+"""
+    eachmatch(r::Regex, s::AbstractString[, overlap::Bool=false])
 
-# miscellaneous methods that depend on Regex being defined
+Search for all matches of a the regular expression `r` in `s` and return a iterator over the
+matches. If overlap is `true`, the matching sequences are allowed to overlap indices in the
+original string, otherwise they must be from distinct character ranges.
 
-filter!(r::Regex, v) = filter!(x->ismatch(r,x), v)
-filter(r::Regex, v)  = filter(x->ismatch(r,x), v)
+# Examples
+```jldoctest
+julia> rx = r"a.a"
+r"a.a"
 
-filter!(r::Regex, d::Dict) = filter!((k,v)->ismatch(r,k),d)
-filter(r::Regex,  d::Dict) = filter!(r,copy(d))
+julia> m = eachmatch(rx, "a1a2a3a")
+Base.RegexMatchIterator(r"a.a", "a1a2a3a", false)
 
+julia> collect(m)
+2-element Array{RegexMatch,1}:
+ RegexMatch("a1a")
+ RegexMatch("a3a")
 
-# Don't serialize the pointers
-function serialize(s, r::Regex)
-    serialize_type(s, typeof(r))
-    serialize(s, r.pattern) 
-    serialize(s, r.options) 
+julia> collect(eachmatch(rx, "a1a2a3a", true))
+3-element Array{RegexMatch,1}:
+ RegexMatch("a1a")
+ RegexMatch("a2a")
+ RegexMatch("a3a")
+```
+"""
+eachmatch(re::Regex, str::AbstractString) = RegexMatchIterator(re,str)
+
+## comparison ##
+
+function ==(a::Regex, b::Regex)
+    a.pattern == b.pattern && a.compile_options == b.compile_options && a.match_options == b.match_options
 end
 
-function deserialize(s, t::Type{Regex})
-    pattern = deserialize(s)
-    options = deserialize(s)
-    Regex(pattern, options)        
+## hash ##
+const hashre_seed = UInt === UInt64 ? 0x67e195eb8555e72d : 0xe32373e4
+function hash(r::Regex, h::UInt)
+    h += hashre_seed
+    h = hash(r.pattern, h)
+    h = hash(r.compile_options, h)
+    h = hash(r.match_options, h)
 end

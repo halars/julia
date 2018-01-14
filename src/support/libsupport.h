@@ -1,5 +1,7 @@
-#ifndef LIBSUPPORT_H
-#define LIBSUPPORT_H
+// This file is a part of Julia. License is MIT: https://julialang.org/license
+
+#ifndef JL_LIBSUPPORT_H
+#define JL_LIBSUPPORT_H
 
 #include "platform.h"
 
@@ -20,7 +22,7 @@
 extern "C" {
 #endif
 
-DLLEXPORT void libsupport_init(void);
+JL_DLLEXPORT void libsupport_init(void);
 
 #ifdef __cplusplus
 }

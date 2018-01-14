@@ -1,45 +1,7 @@
-# generic operations on associative collections
-
-abstract Associative{K,V}
-
-const secret_table_token = :__c782dbf1cf4d6a2e5e3865d7e95634f2e09b5902__
-
-haskey(d::Associative, k) = in(k,keys(d))
-
-function in(p::(Any,Any), a::Associative)
-    v = get(a,p[1],secret_table_token)
-    !is(v, secret_table_token) && (v == p[2])
-end
-
-function summary(t::Associative)
-    n = length(t)
-    string(typeof(t), " with ", n, (n==1 ? " entry" : " entries"))
-end
-
-function show{K,V}(io::IO, t::Associative{K,V})
-    if isempty(t)
-        print(io, typeof(t),"()")
-    else
-        if K === Any && V === Any
-            delims = ['{','}']
-        else
-            delims = ['[',']']
-        end
-        print(io, delims[1])
-        first = true
-        for (k, v) in t
-            first || print(io, ',')
-            first = false
-            show(io, k)
-            print(io, "=>")
-            show(io, v)
-        end
-        print(io, delims[2])
-    end
-end
+# This file is a part of Julia. License is MIT: https://julialang.org/license
 
 function _truncate_at_width_or_chars(str, width, chars="", truncmark="…")
-    truncwidth = strwidth(truncmark)
+    truncwidth = textwidth(truncmark)
     (width <= 0 || width < truncwidth) && return ""
 
     wid = truncidx = lastidx = 0
@@ -47,356 +9,201 @@ function _truncate_at_width_or_chars(str, width, chars="", truncmark="…")
     while !done(str, idx)
         lastidx = idx
         c, idx = next(str, idx)
-        wid += charwidth(c)
+        wid += textwidth(c)
         wid >= width - truncwidth && truncidx == 0 && (truncidx = lastidx)
         (wid >= width || c in chars) && break
     end
 
     lastidx != 0 && str[lastidx] in chars && (lastidx = prevind(str, lastidx))
     truncidx == 0 && (truncidx = lastidx)
-    if lastidx < sizeof(str)
-        return bytestring(SubString(str, 1, truncidx) * truncmark)
+    if lastidx < endof(str)
+        return String(SubString(str, 1, truncidx) * truncmark)
     else
-        return bytestring(str)
+        return String(str)
     end
 end
 
-showdict(t::Associative; kw...) = showdict(STDOUT, t; kw...)
-function showdict{K,V}(io::IO, t::Associative{K,V}; limit::Bool = false,
-                       sz=(s = tty_size(); (s[1]-3, s[2])))
-    rows, cols = sz
-    print(io, summary(t))
-    isempty(t) && return
-    print(io, ":")
-
-    if limit
-        rows < 2   && (print(io, " …"); return)
-        cols < 12  && (cols = 12) # Minimum widths of 2 for key, 4 for value
-        cols -= 6 # Subtract the widths of prefix "  " separator " => "
-        rows -= 2 # Subtract the summary and final ⋮ continuation lines
-
-        # determine max key width to align the output, caching the strings
-        ks = Array(String, min(rows, length(t)))
-        keylen = 0
-        for (i, k) in enumerate(keys(t))
-            i > rows && break
-            ks[i] = sprint(show, k)
-            keylen = clamp(length(ks[i]), keylen, div(cols, 3))
-        end
+function show(io::IO, t::AbstractDict{K,V}) where V where K
+    recur_io = IOContext(io, :SHOWN_SET => t)
+    limit::Bool = get(io, :limit, false)
+    if !haskey(io, :compact)
+        recur_io = IOContext(recur_io, :compact => true)
     end
 
-    for (i, (k, v)) in enumerate(t)
-        print(io, "\n  ")
-        limit && i > rows && (print(io, rpad("⋮", keylen), " => ⋮"); break)
-
-        if limit
-            key = rpad(_truncate_at_width_or_chars(ks[i], keylen, "\r\n"), keylen)
+    # show in a Julia-syntax-like form: Dict(k=>v, ...)
+    if isempty(t)
+        print(io, typeof(t), "()")
+    else
+        if _isleaftype(K) && _isleaftype(V)
+            print(io, typeof(t).name)
         else
-            key = sprint(show, k)
+            print(io, typeof(t))
         end
-        print(io, key)
-        print(io, " => ")
-
-        val = sprint(show, v)
-        if limit
-            val = _truncate_at_width_or_chars(val, cols - keylen, "\r\n")
+        print(io, '(')
+        if !show_circular(io, t)
+            first = true
+            n = 0
+            for pair in t
+                first || print(io, ',')
+                first = false
+                show(recur_io, pair)
+                n+=1
+                limit && n >= 10 && (print(io, "…"); break)
+            end
         end
-        print(io, val)
+        print(io, ')')
     end
 end
 
-immutable KeyIterator{T<:Associative}
-    dict::T
-end
-immutable ValueIterator{T<:Associative}
-    dict::T
-end
+abstract type AbstractSerializer end
 
-summary{T<:Union(KeyIterator,ValueIterator)}(iter::T) =
-    string(T.name, " for a ", summary(iter.dict))
+# Dict
 
-show(io::IO, iter::Union(KeyIterator,ValueIterator)) = show(io, collect(iter))
-
-showkv(iter::Union(KeyIterator,ValueIterator); kw...) = showkv(STDOUT, iter; kw...)
-function showkv{T<:Union(KeyIterator,ValueIterator)}(io::IO, iter::T; limit::Bool = false,
-                                                     sz=(s = tty_size(); (s[1]-3, s[2])))
-    rows, cols = sz
-    print(io, summary(iter))
-    isempty(iter) && return
-    print(io, ". ", T<:KeyIterator ? "Keys" : "Values", ":")
-    if limit
-        rows < 2 && (print(io, " …"); return)
-        cols < 4 && (cols = 4)
-        cols -= 2 # For prefix "  "
-        rows -= 2 # For summary and final ⋮ continuation lines
-    end
-
-    for (i, v) in enumerate(iter)
-        print(io, "\n  ")
-        limit && i >= rows && (print(io, "⋮"); break)
-
-        str = sprint(show, v)
-        limit && (str = _truncate_at_width_or_chars(str, cols, "\r\n"))
-        print(io, str)
-    end
-end
-
-length(v::Union(KeyIterator,ValueIterator)) = length(v.dict)
-isempty(v::Union(KeyIterator,ValueIterator)) = isempty(v.dict)
-eltype(v::KeyIterator) = eltype(v.dict)[1]
-eltype(v::ValueIterator) = eltype(v.dict)[2]
-
-start(v::Union(KeyIterator,ValueIterator)) = start(v.dict)
-done(v::Union(KeyIterator,ValueIterator), state) = done(v.dict, state)
-
-function next(v::KeyIterator, state)
-    n = next(v.dict, state)
-    n[1][1], n[2]
-end
-
-function next(v::ValueIterator, state)
-    n = next(v.dict, state)
-    n[1][2], n[2]
-end
-
-in(k, v::KeyIterator) = !is(get(v.dict, k, secret_table_token),
-                            secret_table_token)
-
-keys(a::Associative) = KeyIterator(a)
-values(a::Associative) = ValueIterator(a)
-
-function copy(a::Associative)
-    b = similar(a)
-    for (k,v) in a
-        b[k] = v
-    end
-    return b
-end
-
-function merge!(d::Associative, others::Associative...)
-    for other in others
-        for (k,v) in other
-            d[k] = v
-        end
-    end
-    return d
-end
-merge(d::Associative, others::Associative...) = merge!(copy(d), others...)
-
-function filter!(f::Function, d::Associative)
-    for (k,v) in d
-        if !f(k,v)
-            delete!(d,k)
-        end
-    end
-    return d
-end
-filter(f::Function, d::Associative) = filter!(f,copy(d))
-
-eltype{K,V}(a::Associative{K,V}) = (K,V)
-
-function isequal(l::Associative, r::Associative)
-    if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
-        return false
-    end
-    if length(l) != length(r) return false end
-    for (key, value) in l
-        if !isequal(value, get(r, key, secret_table_token))
-            return false
-        end
-    end
-    true
-end
-
-function ==(l::Associative, r::Associative)
-    if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
-        return false
-    end
-    if length(l) != length(r) return false end
-    for (key, value) in l
-        if value != get(r, key, secret_table_token)
-            return false
-        end
-    end
-    true
-end
-
-# some support functions
+# These can be changed, to trade off better performance for space
+const global maxallowedprobe = 16
+const global maxprobeshift   = 6
 
 _tablesz(x::Integer) = x < 16 ? 16 : one(x)<<((sizeof(x)<<3)-leading_zeros(x-1))
 
-function getindex(t::Associative, key)
-    v = get(t, key, secret_table_token)
-    if is(v, secret_table_token)
-        throw(KeyError(key))
-    end
-    return v
-end
+"""
+    Dict([itr])
 
-# t[k1,k2,ks...] is syntactic sugar for t[(k1,k2,ks...)].  (Note
-# that we need to avoid dispatch loops if setindex!(t,v,k) is not defined.)
-getindex(t::Associative, k1, k2, ks...) = getindex(t, tuple(k1,k2,ks...))
-setindex!(t::Associative, v, k1, k2, ks...) = setindex!(t, v, tuple(k1,k2,ks...))
+`Dict{K,V}()` constructs a hash table with keys of type `K` and values of type `V`.
 
-push!(t::Associative, key, v) = setindex!(t, v, key)
+Given a single iterable argument, constructs a [`Dict`](@ref) whose key-value pairs
+are taken from 2-tuples `(key,value)` generated by the argument.
 
-# hashing objects by identity
+```jldoctest
+julia> Dict([("A", 1), ("B", 2)])
+Dict{String,Int64} with 2 entries:
+  "B" => 2
+  "A" => 1
+```
 
-type ObjectIdDict <: Associative{Any,Any}
-    ht::Array{Any,1}
-    ObjectIdDict() = new(cell(32))
+Alternatively, a sequence of pair arguments may be passed.
 
-    function ObjectIdDict(itr)
-        d = ObjectIdDict()
-        for (k,v) in itr
-            d[k] = v
-        end
-        d
-    end
-
-    function ObjectIdDict(o::ObjectIdDict)
-        N = length(o.ht)
-        ht = cell(N)
-        ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Uint),
-              ht, o.ht, N*sizeof(Ptr))
-        new(ht)
-    end
-end
-
-similar(d::ObjectIdDict) = ObjectIdDict()
-
-function setindex!(t::ObjectIdDict, v::ANY, k::ANY)
-    t.ht = ccall(:jl_eqtable_put, Array{Any,1}, (Any, Any, Any), t.ht, k, v)
-    return t
-end
-
-get(t::ObjectIdDict, key::ANY, default::ANY) =
-    ccall(:jl_eqtable_get, Any, (Any, Any, Any), t.ht, key, default)
-
-pop!(t::ObjectIdDict, key::ANY, default::ANY) =
-    ccall(:jl_eqtable_pop, Any, (Any, Any, Any), t.ht, key, default)
-
-function pop!(t::ObjectIdDict, key::ANY)
-    val = pop!(t, key, secret_table_token)
-    !is(val,secret_table_token) ? val : throw(KeyError(key))
-end
-
-function delete!(t::ObjectIdDict, key::ANY)
-    ccall(:jl_eqtable_pop, Any, (Any, Any), t.ht, key)
-    t
-end
-
-empty!(t::ObjectIdDict) = (t.ht = cell(length(t.ht)); t)
-
-_oidd_nextind(a, i) = int(ccall(:jl_eqtable_nextind, Csize_t, (Any, Csize_t), a, i))
-
-start(t::ObjectIdDict) = _oidd_nextind(t.ht, 0)
-done(t::ObjectIdDict, i) = (i == -1)
-next(t::ObjectIdDict, i) = ((t.ht[i+1],t.ht[i+2]), _oidd_nextind(t.ht, i+2))
-
-function length(d::ObjectIdDict)
-    n = 0
-    for pair in d
-        n+=1
-    end
-    n
-end
-
-copy(o::ObjectIdDict) = ObjectIdDict(o)
-
-# dict
-
-type Dict{K,V} <: Associative{K,V}
-    slots::Array{Uint8,1}
+```jldoctest
+julia> Dict("A"=>1, "B"=>2)
+Dict{String,Int64} with 2 entries:
+  "B" => 2
+  "A" => 1
+```
+"""
+mutable struct Dict{K,V} <: AbstractDict{K,V}
+    slots::Array{UInt8,1}
     keys::Array{K,1}
     vals::Array{V,1}
     ndel::Int
     count::Int
-    deleter::Function
+    age::UInt
+    idxfloor::Int  # an index <= the indices of all used slots
+    maxprobe::Int
 
-    function Dict()
+    function Dict{K,V}() where V where K
         n = 16
-        new(zeros(Uint8,n), Array(K,n), Array(V,n), 0, 0, identity)
+        new(zeros(UInt8,n), Vector{K}(uninitialized, n), Vector{V}(uninitialized, n), 0, 0, 0, 1, 0)
     end
-    function Dict(ks, vs)
-        # TODO: eventually replace with a call to Dict(zip(ks,vs))
-        n = min(length(ks), length(vs))
-        h = Dict{K,V}()
-        for i=1:n
-            h[ks[i]] = vs[i]
-        end
-        return h
+    function Dict{K,V}(d::Dict{K,V}) where V where K
+        new(copy(d.slots), copy(d.keys), copy(d.vals), d.ndel, d.count, d.age,
+            d.idxfloor, d.maxprobe)
     end
-    function Dict(kv)
-        h = Dict{K,V}()
-        for (k,v) in kv
-            h[k] = v
-        end
-        return h
+    function Dict{K, V}(slots, keys, vals, ndel, count, age, idxfloor, maxprobe) where {K, V}
+        new(slots, keys, vals, ndel, count, age, idxfloor, maxprobe)
     end
 end
-Dict() = Dict{Any,Any}()
-
-Dict{K,V}(ks::AbstractArray{K}, vs::AbstractArray{V}) = Dict{K,V}(ks,vs)
-Dict(ks, vs) = Dict{Any,Any}(ks, vs)
-
-# conversion between Dict types
-function convert{K,V}(::Type{Dict{K,V}},d::Dict)
+function Dict{K,V}(kv) where V where K
     h = Dict{K,V}()
-    for (k,v) in d
-        ck = convert(K,k)
-        if !haskey(h,ck)
-            h[ck] = convert(V,v)
-        else
-            error("key collision during dictionary conversion")
-        end
+    for (k,v) in kv
+        h[k] = v
     end
     return h
 end
-convert{K,V}(::Type{Dict{K,V}},d::Dict{K,V}) = d
+Dict{K,V}(p::Pair) where {K,V} = setindex!(Dict{K,V}(), p.second, p.first)
+function Dict{K,V}(ps::Pair...) where V where K
+    h = Dict{K,V}()
+    sizehint!(h, length(ps))
+    for p in ps
+        h[p.first] = p.second
+    end
+    return h
+end
+# Note the constructors of WeakKeyDict mirror these here, keep in sync.
+Dict() = Dict{Any,Any}()
+Dict(kv::Tuple{}) = Dict()
+copy(d::Dict) = Dict(d)
 
-# syntax entry points
-Dict{K,V}(ks::(K...), vs::(V...)) = Dict{K  ,V  }(ks, vs)
-Dict{K  }(ks::(K...), vs::Tuple ) = Dict{K  ,Any}(ks, vs)
-Dict{V  }(ks::Tuple , vs::(V...)) = Dict{Any,V  }(ks, vs)
+const AnyDict = Dict{Any,Any}
 
-Dict{K,V}(kv::AbstractArray{(K,V)}) = Dict{K,V}(kv)
-Dict{K,V}(kv::Associative{K,V}) = Dict{K,V}(kv)
+Dict(ps::Pair{K,V}...)           where {K,V} = Dict{K,V}(ps)
+Dict(ps::Pair{K}...)             where {K}   = Dict{K,Any}(ps)
+Dict(ps::(Pair{K,V} where K)...) where {V}   = Dict{Any,V}(ps)
+Dict(ps::Pair...)                            = Dict{Any,Any}(ps)
 
-similar{K,V}(d::Dict{K,V}) = (K=>V)[]
-
-function serialize(s, t::Dict)
-    serialize_type(s, typeof(t))
-    write(s, int32(length(t)))
-    for (k,v) in t
-        serialize(s, k)
-        serialize(s, v)
+function Dict(kv)
+    try
+        dict_with_eltype((K, V) -> Dict{K, V}, kv, eltype(kv))
+    catch e
+        if !applicable(start, kv) || !all(x->isa(x,Union{Tuple,Pair}),kv)
+            throw(ArgumentError("Dict(kv): kv needs to be an iterator of tuples or pairs"))
+        else
+            rethrow(e)
+        end
     end
 end
 
-function deserialize{K,V}(s, T::Type{Dict{K,V}})
-    n = read(s, Int32)
-    t = T(); sizehint(t, n)
-    for i = 1:n
-        k = deserialize(s)
-        v = deserialize(s)
-        t[k] = v
+TP{K,V} = Union{Type{Tuple{K,V}},Type{Pair{K,V}}}
+
+dict_with_eltype(DT_apply, kv, ::TP{K,V}) where {K,V} = DT_apply(K, V)(kv)
+dict_with_eltype(DT_apply, kv::Generator, ::TP{K,V}) where {K,V} = DT_apply(K, V)(kv)
+dict_with_eltype(DT_apply, ::Type{Pair{K,V}}) where {K,V} = DT_apply(K, V)()
+dict_with_eltype(DT_apply, ::Type) = DT_apply(Any, Any)()
+dict_with_eltype(DT_apply::F, kv, t) where {F} = grow_to!(dict_with_eltype(DT_apply, @default_eltype(typeof(kv))), kv)
+function dict_with_eltype(DT_apply::F, kv::Generator, t) where F
+    T = @default_eltype(kv)
+    if T <: Union{Pair, Tuple{Any, Any}} && _isleaftype(T)
+        return dict_with_eltype(DT_apply, kv, T)
     end
-    return t
+    return grow_to!(dict_with_eltype(DT_apply, T), kv)
 end
 
-hashindex(key, sz) = (int(hash(key)) & (sz-1)) + 1
+# this is a special case due to (1) allowing both Pairs and Tuples as elements,
+# and (2) Pair being invariant. a bit annoying.
+function grow_to!(dest::AbstractDict, itr)
+    out = grow_to!(empty(dest, Union{}, Union{}), itr, start(itr))
+    return isempty(out) ? dest : out
+end
 
-isslotempty(h::Dict, i::Int) = h.slots[i] == 0x0
-isslotfilled(h::Dict, i::Int) = h.slots[i] == 0x1
-isslotmissing(h::Dict, i::Int) = h.slots[i] == 0x2
+function grow_to!(dest::AbstractDict{K,V}, itr, st) where V where K
+    while !done(itr, st)
+        (k,v), st = next(itr, st)
+        if isa(k,K) && isa(v,V)
+            dest[k] = v
+        else
+            new = empty(dest, typejoin(K,typeof(k)), typejoin(V,typeof(v)))
+            merge!(new, dest)
+            new[k] = v
+            return grow_to!(new, itr, st)
+        end
+    end
+    return dest
+end
 
-function rehash{K,V}(h::Dict{K,V}, newsz)
+empty(a::AbstractDict, ::Type{K}, ::Type{V}) where {K, V} = Dict{K, V}()
+
+hashindex(key, sz) = (((hash(key)%Int) & (sz-1)) + 1)::Int
+
+@propagate_inbounds isslotempty(h::Dict, i::Int) = h.slots[i] == 0x0
+@propagate_inbounds isslotfilled(h::Dict, i::Int) = h.slots[i] == 0x1
+@propagate_inbounds isslotmissing(h::Dict, i::Int) = h.slots[i] == 0x2
+
+function rehash!(h::Dict{K,V}, newsz = length(h.keys)) where V where K
     olds = h.slots
     oldk = h.keys
     oldv = h.vals
     sz = length(olds)
     newsz = _tablesz(newsz)
+    h.age += 1
+    h.idxfloor = 1
     if h.count == 0
         resize!(h.slots, newsz)
         fill!(h.slots, 0)
@@ -406,28 +213,31 @@ function rehash{K,V}(h::Dict{K,V}, newsz)
         return h
     end
 
-    slots = zeros(Uint8,newsz)
-    keys = Array(K, newsz)
-    vals = Array(V, newsz)
-    count0 = h.count
+    slots = zeros(UInt8,newsz)
+    keys = Vector{K}(uninitialized, newsz)
+    vals = Vector{V}(uninitialized, newsz)
+    age0 = h.age
     count = 0
+    maxprobe = h.maxprobe
 
     for i = 1:sz
-        if olds[i] == 0x1
+        @inbounds if olds[i] == 0x1
             k = oldk[i]
             v = oldv[i]
-            index = hashindex(k, newsz)
+            index0 = index = hashindex(k, newsz)
             while slots[index] != 0
                 index = (index & (newsz-1)) + 1
             end
+            probe = (index - index0) & (newsz-1)
+            probe > maxprobe && (maxprobe = probe)
             slots[index] = 0x1
             keys[index] = k
             vals[index] = v
             count += 1
 
-            if h.count != count0
-                # if items are removed by finalizers, retry
-                return rehash(h, newsz)
+            if h.age != age0
+                # if `h` is changed by a finalizer, retry
+                return rehash!(h, newsz)
             end
         end
     end
@@ -437,71 +247,102 @@ function rehash{K,V}(h::Dict{K,V}, newsz)
     h.vals = vals
     h.count = count
     h.ndel = 0
+    h.maxprobe = maxprobe
+    @assert h.age == age0
 
     return h
 end
 
-function sizehint(d::Dict, newsz)
+max_values(::Type) = typemax(Int)
+max_values(T::Type{<:Union{Nothing,BitIntegerSmall}}) = 1 << (8*sizeof(T))
+max_values(T::Union) = max(max_values(T.a), max_values(T.b))
+max_values(::Type{Bool}) = 2
+
+function sizehint!(d::Dict{T}, newsz) where T
     oldsz = length(d.slots)
     if newsz <= oldsz
         # todo: shrink
-        # be careful: rehash() assumes everything fits. it was only designed
+        # be careful: rehash!() assumes everything fits. it was only designed
         # for growing.
         return d
     end
     # grow at least 25%
-    newsz = max(newsz, (oldsz*5)>>2)
-    rehash(d, newsz)
+    newsz = min(max(newsz, (oldsz*5)>>2),
+                max_values(T))
+    rehash!(d, newsz)
 end
 
-function empty!{K,V}(h::Dict{K,V})
+"""
+    empty!(collection) -> collection
+
+Remove all elements from a `collection`.
+
+```jldoctest
+julia> A = Dict("a" => 1, "b" => 2)
+Dict{String,Int64} with 2 entries:
+  "b" => 2
+  "a" => 1
+
+julia> empty!(A);
+
+julia> A
+Dict{String,Int64} with 0 entries
+```
+"""
+function empty!(h::Dict{K,V}) where V where K
     fill!(h.slots, 0x0)
     sz = length(h.slots)
-    h.keys = Array(K, sz)
-    h.vals = Array(V, sz)
+    empty!(h.keys)
+    empty!(h.vals)
+    resize!(h.keys, sz)
+    resize!(h.vals, sz)
     h.ndel = 0
     h.count = 0
+    h.age += 1
+    h.idxfloor = 1
     return h
 end
 
 # get the index where a key is stored, or -1 if not present
-function ht_keyindex{K,V}(h::Dict{K,V}, key)
+function ht_keyindex(h::Dict{K,V}, key) where V where K
     sz = length(h.keys)
     iter = 0
-    maxprobe = max(16, sz>>6)
+    maxprobe = h.maxprobe
     index = hashindex(key, sz)
     keys = h.keys
 
-    while true
+    @inbounds while true
         if isslotempty(h,index)
             break
         end
-        if !isslotmissing(h,index) && isequal(key,keys[index])
+        if !isslotmissing(h,index) && (key === keys[index] || isequal(key,keys[index]))
             return index
         end
 
         index = (index & (sz-1)) + 1
-        iter+=1
+        iter += 1
         iter > maxprobe && break
     end
-
     return -1
 end
 
 # get the index where a key is stored, or -pos if not present
 # and the key would be inserted at pos
 # This version is for use by setindex! and get!
-function ht_keyindex2{K,V}(h::Dict{K,V}, key)
+function ht_keyindex2!(h::Dict{K,V}, key) where V where K
+    age0 = h.age
     sz = length(h.keys)
     iter = 0
-    maxprobe = max(16, sz>>6)
+    maxprobe = h.maxprobe
     index = hashindex(key, sz)
     avail = 0
     keys = h.keys
 
-    while true
+    @inbounds while true
         if isslotempty(h,index)
-            avail < 0 && return avail
+            if avail < 0
+                return avail
+            end
             return -index
         end
 
@@ -511,126 +352,248 @@ function ht_keyindex2{K,V}(h::Dict{K,V}, key)
                 # in case "key" already exists in a later collided slot.
                 avail = -index
             end
-        elseif isequal(key, keys[index])
+        elseif key === keys[index] || isequal(key, keys[index])
             return index
         end
 
         index = (index & (sz-1)) + 1
-        iter+=1
+        iter += 1
         iter > maxprobe && break
     end
 
     avail < 0 && return avail
 
-    rehash(h, h.count > 64000 ? sz*2 : sz*4)
+    maxallowed = max(maxallowedprobe, sz>>maxprobeshift)
+    # Check if key is not present, may need to keep searching to find slot
+    @inbounds while iter < maxallowed
+        if !isslotfilled(h,index)
+            h.maxprobe = iter
+            return -index
+        end
+        index = (index & (sz-1)) + 1
+        iter += 1
+    end
 
-    return ht_keyindex2(h, key)
+    rehash!(h, h.count > 64000 ? sz*2 : sz*4)
+
+    return ht_keyindex2!(h, key)
 end
 
-function _setindex!(h::Dict, v, key, index)
+@propagate_inbounds function _setindex!(h::Dict, v, key, index)
     h.slots[index] = 0x1
     h.keys[index] = key
     h.vals[index] = v
     h.count += 1
+    h.age += 1
+    if index < h.idxfloor
+        h.idxfloor = index
+    end
 
     sz = length(h.keys)
     # Rehash now if necessary
     if h.ndel >= ((3*sz)>>2) || h.count*3 > sz*2
         # > 3/4 deleted or > 2/3 full
-        rehash(h, h.count > 64000 ? h.count*2 : h.count*4)
+        rehash!(h, h.count > 64000 ? h.count*2 : h.count*4)
     end
 end
 
-function setindex!{K,V}(h::Dict{K,V}, v0, key0)
-    key = convert(K,key0)
-    if !isequal(key,key0)
-        error(key0, " is not a valid key for type ", K)
+function setindex!(h::Dict{K,V}, v0, key0) where V where K
+    key = convert(K, key0)
+    if !isequal(key, key0)
+        throw(ArgumentError("$key0 is not a valid key for type $K"))
     end
-    v = convert(V,  v0)
+    setindex!(h, v0, key)
+end
 
-    index = ht_keyindex2(h, key)
+function setindex!(h::Dict{K,V}, v0, key::K) where V where K
+    v = convert(V, v0)
+    index = ht_keyindex2!(h, key)
 
     if index > 0
-        h.keys[index] = key
-        h.vals[index] = v
+        h.age += 1
+        @inbounds h.keys[index] = key
+        @inbounds h.vals[index] = v
     else
-        _setindex!(h, v, key, -index)
+        @inbounds _setindex!(h, v, key, -index)
     end
 
     return h
 end
 
-function get!{K,V}(h::Dict{K,V}, key0, default)
-    key = convert(K,key0)
-    if !isequal(key,key0)
-        error(key0, " is not a valid key for type ", K)
-    end
+"""
+    get!(collection, key, default)
 
-    index = ht_keyindex2(h, key)
+Return the value stored for the given key, or if no mapping for the key is present, store
+`key => default`, and return `default`.
+
+# Examples
+```jldoctest
+julia> d = Dict("a"=>1, "b"=>2, "c"=>3);
+
+julia> get!(d, "a", 5)
+1
+
+julia> get!(d, "d", 4)
+4
+
+julia> d
+Dict{String,Int64} with 4 entries:
+  "c" => 3
+  "b" => 2
+  "a" => 1
+  "d" => 4
+```
+"""
+get!(collection, key, default)
+
+get!(h::Dict{K,V}, key0, default) where {K,V} = get!(()->default, h, key0)
+
+"""
+    get!(f::Function, collection, key)
+
+Return the value stored for the given key, or if no mapping for the key is present, store
+`key => f()`, and return `f()`.
+
+This is intended to be called using `do` block syntax:
+```julia
+get!(dict, key) do
+    # default value calculated here
+    time()
+end
+```
+"""
+get!(f::Function, collection, key)
+
+function get!(default::Callable, h::Dict{K,V}, key0) where V where K
+    key = convert(K, key0)
+    if !isequal(key, key0)
+        throw(ArgumentError("$key0 is not a valid key for type $K"))
+    end
+    return get!(default, h, key)
+end
+
+function get!(default::Callable, h::Dict{K,V}, key::K) where V where K
+    index = ht_keyindex2!(h, key)
 
     index > 0 && return h.vals[index]
 
-    v = convert(V,  default)
-    _setindex!(h, v, key, -index)
-    return v
-end
-
-function get!{K,V}(default::Callable, h::Dict{K,V}, key0)
-    key = convert(K,key0)
-    if !isequal(key,key0)
-        error(key0, " is not a valid key for type ", K)
+    age0 = h.age
+    v = convert(V, default())
+    if h.age != age0
+        index = ht_keyindex2!(h, key)
     end
-
-    index = ht_keyindex2(h, key)
-
-    index > 0 && return h.vals[index]
-
-    v = convert(V,  default())
-    _setindex!(h, v, key, -index)
+    if index > 0
+        h.age += 1
+        @inbounds h.keys[index] = key
+        @inbounds h.vals[index] = v
+    else
+        @inbounds _setindex!(h, v, key, -index)
+    end
     return v
 end
 
-# NOTE: this macro is specific to Dict, not Associative, and should
+# NOTE: this macro is trivial, and should
 #       therefore not be exported as-is: it's for internal use only.
 macro get!(h, key0, default)
-    quote
-        K, V = eltype($(esc(h)))
-        key = convert(K, $(esc(key0)))
-        isequal(key, $(esc(key0))) || error($(esc(key0)), " is not a valid key for type ", K)
-        idx = ht_keyindex2($(esc(h)), key)
-        if idx < 0
-            idx = -idx
-            v = convert(V, $(esc(default)))
-            _setindex!($(esc(h)), v, key, idx)
-        else
-            @inbounds v = $(esc(h)).vals[idx]
-        end
-        v
+    return quote
+        get!(()->$(esc(default)), $(esc(h)), $(esc(key0)))
     end
 end
 
 
-function getindex{K,V}(h::Dict{K,V}, key)
+function getindex(h::Dict{K,V}, key) where V where K
     index = ht_keyindex(h, key)
-    return (index<0) ? throw(KeyError(key)) : h.vals[index]::V
+    @inbounds return (index < 0) ? throw(KeyError(key)) : h.vals[index]::V
 end
 
-function get{K,V}(h::Dict{K,V}, key, default)
+"""
+    get(collection, key, default)
+
+Return the value stored for the given key, or the given default value if no mapping for the
+key is present.
+
+# Examples
+```jldoctest
+julia> d = Dict("a"=>1, "b"=>2);
+
+julia> get(d, "a", 3)
+1
+
+julia> get(d, "c", 3)
+3
+```
+"""
+get(collection, key, default)
+
+function get(h::Dict{K,V}, key, default) where V where K
     index = ht_keyindex(h, key)
-    return (index<0) ? default : h.vals[index]::V
+    @inbounds return (index < 0) ? default : h.vals[index]::V
 end
 
-function get{K,V}(default::Callable, h::Dict{K,V}, key)
+"""
+    get(f::Function, collection, key)
+
+Return the value stored for the given key, or if no mapping for the key is present, return
+`f()`.  Use [`get!`](@ref) to also store the default value in the dictionary.
+
+This is intended to be called using `do` block syntax
+
+```julia
+get(dict, key) do
+    # default value calculated here
+    time()
+end
+```
+"""
+get(::Function, collection, key)
+
+function get(default::Callable, h::Dict{K,V}, key) where V where K
     index = ht_keyindex(h, key)
-    return (index<0) ? default() : h.vals[index]::V
+    @inbounds return (index < 0) ? default() : h.vals[index]::V
 end
 
+"""
+    haskey(collection, key) -> Bool
+
+Determine whether a collection has a mapping for a given key.
+
+```jldoctest
+julia> a = Dict('a'=>2, 'b'=>3)
+Dict{Char,Int64} with 2 entries:
+  'b' => 3
+  'a' => 2
+
+julia> haskey(a,'a')
+true
+
+julia> haskey(a,'c')
+false
+```
+"""
 haskey(h::Dict, key) = (ht_keyindex(h, key) >= 0)
-in{T<:Dict}(key, v::KeyIterator{T}) = (ht_keyindex(v.dict, key) >= 0)
+in(key, v::KeySet{<:Any, <:Dict}) = (ht_keyindex(v.dict, key) >= 0)
 
-function getkey{K,V}(h::Dict{K,V}, key, default)
+"""
+    getkey(collection, key, default)
+
+Return the key matching argument `key` if one exists in `collection`, otherwise return `default`.
+
+```jldoctest
+julia> a = Dict('a'=>2, 'b'=>3)
+Dict{Char,Int64} with 2 entries:
+  'b' => 3
+  'a' => 2
+
+julia> getkey(a,'a',1)
+'a': ASCII/Unicode U+0061 (category Ll: Letter, lowercase)
+
+julia> getkey(a,'d','a')
+'a': ASCII/Unicode U+0061 (category Ll: Letter, lowercase)
+```
+"""
+function getkey(h::Dict{K,V}, key, default) where V where K
     index = ht_keyindex(h, key)
-    return (index<0) ? default : h.keys[index]::K
+    @inbounds return (index<0) ? default : h.keys[index]::K
 end
 
 function _pop!(h::Dict, index)
@@ -641,116 +604,184 @@ end
 
 function pop!(h::Dict, key)
     index = ht_keyindex(h, key)
-    index > 0 ? _pop!(h, index) : throw(KeyError(key))
+    return index > 0 ? _pop!(h, index) : throw(KeyError(key))
 end
+
+"""
+    pop!(collection, key[, default])
+
+Delete and return the mapping for `key` if it exists in `collection`, otherwise return
+`default`, or throw an error if `default` is not specified.
+
+# Examples
+```jldoctest
+julia> d = Dict("a"=>1, "b"=>2, "c"=>3);
+
+julia> pop!(d, "a")
+1
+
+julia> pop!(d, "d")
+ERROR: KeyError: key "d" not found
+Stacktrace:
+[...]
+
+julia> pop!(d, "e", 4)
+4
+```
+"""
+pop!(collection, key, default)
 
 function pop!(h::Dict, key, default)
     index = ht_keyindex(h, key)
-    index > 0 ? _pop!(h, index) : default
+    return index > 0 ? _pop!(h, index) : default
+end
+
+function pop!(h::Dict)
+    isempty(h) && throw(ArgumentError("dict must be non-empty"))
+    idx = start(h)
+    @inbounds key = h.keys[idx]
+    @inbounds val = h.vals[idx]
+    _delete!(h, idx)
+    key => val
 end
 
 function _delete!(h::Dict, index)
     h.slots[index] = 0x2
-    ccall(:jl_arrayunset, Void, (Any, Uint), h.keys, index-1)
-    ccall(:jl_arrayunset, Void, (Any, Uint), h.vals, index-1)
+    ccall(:jl_arrayunset, Cvoid, (Any, UInt), h.keys, index-1)
+    ccall(:jl_arrayunset, Cvoid, (Any, UInt), h.vals, index-1)
     h.ndel += 1
     h.count -= 1
-    h
+    h.age += 1
+    return h
 end
+
+"""
+    delete!(collection, key)
+
+Delete the mapping for the given key in a collection, and return the collection.
+
+# Examples
+```jldoctest
+julia> d = Dict("a"=>1, "b"=>2)
+Dict{String,Int64} with 2 entries:
+  "b" => 2
+  "a" => 1
+
+julia> delete!(d, "b")
+Dict{String,Int64} with 1 entry:
+  "a" => 1
+```
+"""
+delete!(collection, key)
 
 function delete!(h::Dict, key)
     index = ht_keyindex(h, key)
-    if index > 0; _delete!(h, index); end
-    h
+    if index > 0
+        _delete!(h, index)
+    end
+    return h
 end
 
 function skip_deleted(h::Dict, i)
     L = length(h.slots)
-    while i<=L && !isslotfilled(h,i)
+    @inbounds while i<=L && !isslotfilled(h,i)
         i += 1
     end
     return i
 end
 
-start(t::Dict) = skip_deleted(t, 1)
-done(t::Dict, i) = done(t.vals, i)
-next(t::Dict, i) = ((t.keys[i],t.vals[i]), skip_deleted(t,i+1))
+function start(t::Dict)
+    i = skip_deleted(t, t.idxfloor)
+    t.idxfloor = i
+    return i
+end
+done(t::Dict, i) = i > length(t.vals)
+@propagate_inbounds function next(t::Dict{K,V}, i) where {K,V}
+    return (Pair{K,V}(t.keys[i],t.vals[i]), skip_deleted(t,i+1))
+end
 
 isempty(t::Dict) = (t.count == 0)
 length(t::Dict) = t.count
 
-next{T<:Dict}(v::KeyIterator{T}, i) = (v.dict.keys[i], skip_deleted(v.dict,i+1))
-next{T<:Dict}(v::ValueIterator{T}, i) = (v.dict.vals[i], skip_deleted(v.dict,i+1))
+@propagate_inbounds function next(v::KeySet{<:Any, <:Dict}, i)
+    return (v.dict.keys[i], skip_deleted(v.dict,i+1))
+end
+@propagate_inbounds function next(v::ValueIterator{<:Dict}, i)
+    return (v.dict.vals[i], skip_deleted(v.dict,i+1))
+end
 
-# weak key dictionaries
+filter!(f, d::Dict) = filter_in_one_pass!(f, d)
 
-function weak_key_delete!(t::Dict, k)
-    # when a weak key is finalized, remove from dictionary if it is still there
-    wk = getkey(t, k, secret_table_token)
-    if !is(wk,secret_table_token) && is(wk.value, k)
-        delete!(t, k)
+struct ImmutableDict{K,V} <: AbstractDict{K,V}
+    parent::ImmutableDict{K,V}
+    key::K
+    value::V
+    ImmutableDict{K,V}() where {K,V} = new() # represents an empty dictionary
+    ImmutableDict{K,V}(key, value) where {K,V} = (empty = new(); new(empty, key, value))
+    ImmutableDict{K,V}(parent::ImmutableDict, key, value) where {K,V} = new(parent, key, value)
+end
+
+"""
+    ImmutableDict
+
+ImmutableDict is a Dictionary implemented as an immutable linked list,
+which is optimal for small dictionaries that are constructed over many individual insertions
+Note that it is not possible to remove a value, although it can be partially overridden and hidden
+by inserting a new value with the same key
+
+    ImmutableDict(KV::Pair)
+
+Create a new entry in the Immutable Dictionary for the key => value pair
+
+ - use `(key => value) in dict` to see if this particular combination is in the properties set
+ - use `get(dict, key, default)` to retrieve the most recent value for a particular key
+
+"""
+ImmutableDict
+ImmutableDict(KV::Pair{K,V}) where {K,V} = ImmutableDict{K,V}(KV[1], KV[2])
+ImmutableDict(t::ImmutableDict{K,V}, KV::Pair) where {K,V} = ImmutableDict{K,V}(t, KV[1], KV[2])
+
+function in(key_value::Pair, dict::ImmutableDict, valcmp=(==))
+    key, value = key_value
+    while isdefined(dict, :parent)
+        if dict.key == key
+            valcmp(value, dict.value) && return true
+        end
+        dict = dict.parent
     end
+    return false
 end
 
-function add_weak_key(t::Dict, k, v)
-    if is(t.deleter, identity)
-        t.deleter = x->weak_key_delete!(t, x)
+function haskey(dict::ImmutableDict, key)
+    while isdefined(dict, :parent)
+        dict.key == key && return true
+        dict = dict.parent
     end
-    t[WeakRef(k)] = v
-    # TODO: it might be better to avoid the finalizer, allow
-    # wiped WeakRefs to remain in the table, and delete them as
-    # they are discovered by getindex and setindex!.
-    finalizer(k, t.deleter)
-    return t
+    return false
 end
 
-function weak_value_delete!(t::Dict, k, v)
-    # when a weak value is finalized, remove from dictionary if it is still there
-    wv = get(t, k, secret_table_token)
-    if !is(wv,secret_table_token) && is(wv.value, v)
-        delete!(t, k)
+function getindex(dict::ImmutableDict, key)
+    while isdefined(dict, :parent)
+        dict.key == key && return dict.value
+        dict = dict.parent
     end
+    throw(KeyError(key))
 end
-
-function add_weak_value(t::Dict, k, v)
-    t[k] = WeakRef(v)
-    finalizer(v, x->weak_value_delete!(t, k, x))
-    return t
-end
-
-type WeakKeyDict{K,V} <: Associative{K,V}
-    ht::Dict{Any,V}
-
-    WeakKeyDict() = new((Any=>V)[])
-end
-WeakKeyDict() = WeakKeyDict{Any,Any}()
-
-setindex!{K}(wkh::WeakKeyDict{K}, v, key) = add_weak_key(wkh.ht, convert(K,key), v)
-
-function getkey{K}(wkh::WeakKeyDict{K}, kk, default)
-    k = getkey(wkh.ht, kk, secret_table_token)
-    if is(k, secret_table_token)
-        return default
+function get(dict::ImmutableDict, key, default)
+    while isdefined(dict, :parent)
+        dict.key == key && return dict.value
+        dict = dict.parent
     end
-    return k.value::K
+    return default
 end
 
-get{K}(wkh::WeakKeyDict{K}, key, default) = get(wkh.ht, key, default)
-get{K}(default::Callable, wkh::WeakKeyDict{K}, key) = get(default, wkh.ht, key)
-get!{K}(wkh::WeakKeyDict{K}, key, default) = get!(wkh.ht, key, default)
-get!{K}(default::Callable, wkh::WeakKeyDict{K}, key) = get!(default, wkh.ht, key)
-pop!{K}(wkh::WeakKeyDict{K}, key) = pop!(wkh.ht, key)
-pop!{K}(wkh::WeakKeyDict{K}, key, default) = pop!(wkh.ht, key, default)
-delete!{K}(wkh::WeakKeyDict{K}, key) = delete!(wkh.ht, key)
-empty!(wkh::WeakKeyDict)  = (empty!(wkh.ht); wkh)
-haskey{K}(wkh::WeakKeyDict{K}, key) = haskey(wkh.ht, key)
-getindex{K}(wkh::WeakKeyDict{K}, key) = getindex(wkh.ht, key)
-isempty(wkh::WeakKeyDict) = isempty(wkh.ht)
+# this actually defines reverse iteration (e.g. it should not be used for merge/copy/filter type operations)
+start(t::ImmutableDict) = t
+next(::ImmutableDict{K,V}, t) where {K,V} = (Pair{K,V}(t.key, t.value), t.parent)
+done(::ImmutableDict, t) = !isdefined(t, :parent)
+length(t::ImmutableDict) = count(x->true, t)
+isempty(t::ImmutableDict) = done(t, start(t))
+empty(::ImmutableDict, ::Type{K}, ::Type{V}) where {K, V} = ImmutableDict{K,V}()
 
-start(t::WeakKeyDict) = start(t.ht)
-done(t::WeakKeyDict, i) = done(t.ht, i)
-function next{K}(t::WeakKeyDict{K}, i)
-    kv, i = next(t.ht, i)
-    ((kv[1].value::K,kv[2]), i)
-end
-length(t::WeakKeyDict) = length(t.ht)
+_similar_for(c::Dict, ::Type{Pair{K,V}}, itr, isz) where {K, V} = empty(c, K, V)
+_similar_for(c::AbstractDict, T, itr, isz) = throw(ArgumentError("for AbstractDicts, similar requires an element type of Pair;\n  if calling map, consider a comprehension instead"))

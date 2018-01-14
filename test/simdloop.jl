@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 function simd_loop_example_from_manual(x, y, z)
     s = zero(eltype(z))
     n = min(length(x),length(y),length(z))
@@ -23,9 +25,10 @@ function simd_loop_with_multiple_reductions(x, y, z)
     (s,t)
 end
 
-for T in {Int32,Int64,Float32,Float64}
-   # Try various lengths to make sure "remainder loop" works
-   for n in {0,1,2,3,4,255,256,257}
+for T in [Int32,Int64,Float32,Float64]
+    # Try various lengths to make sure "remainder loop" works
+    for n in [0,1,2,3,4,255,256,257]
+        local n, a, b, c, s, t
         # Dataset chosen so that results will be exact with only 24 bits of mantissa
         a = convert(Array{T},[2*j+1 for j in 1:n])
         b = convert(Array{T},[3*j+2 for j in 1:n])
@@ -60,10 +63,86 @@ let j=4
     # Index that is local to loop
     @simd for simd_loop_local=1:0 end
     simd_loop_local_present = true
-    try 
+    try
         simd_loop_local += 1
     catch
         simd_loop_local_present = false
     end
     @test !simd_loop_local_present
 end
+
+import Base.SimdLoop.SimdError
+
+# Test that @simd rejects inner loop body with invalid control flow statements
+# issue #8613
+macro test_throws(ty, ex)
+    return quote
+        Test.@test_throws $(esc(ty)) try
+            $(esc(ex))
+        catch err
+            @test err isa LoadError
+            @test err.file === $(string(__source__.file))
+            @test err.line === $(__source__.line + 1)
+            rethrow(err.error)
+        end
+    end
+end
+
+@test_throws SimdError("break is not allowed inside a @simd loop body") @macroexpand begin
+    @simd for x = 1:10
+        x == 1 && break
+    end
+end
+
+@test_throws SimdError("continue is not allowed inside a @simd loop body") @macroexpand begin
+    @simd for x = 1:10
+        x < 5 && continue
+    end
+end
+
+@test_throws SimdError("@goto is not allowed inside a @simd loop body") @macroexpand begin
+    @simd for x = 1:10
+        x == 1 || @goto exit_loop
+    end
+    @label exit_loop
+end
+
+# @simd with cartesian iteration
+function simd_cartesian_range!(indices, crng)
+    @simd for I in crng
+        push!(indices, I)
+    end
+    indices
+end
+
+crng = CartesianIndices(2:4, 0:1, 1:1, 3:5)
+indices = simd_cartesian_range!(Vector{eltype(crng)}(), crng)
+@test indices == vec(collect(crng))
+
+crng = CartesianIndices(-1:1, 1:3)
+indices = simd_cartesian_range!(Vector{eltype(crng)}(), crng)
+@test indices == vec(collect(crng))
+
+crng = CartesianIndices(-1:-1, 1:3)
+indices = simd_cartesian_range!(Vector{eltype(crng)}(), crng)
+@test indices == vec(collect(crng))
+
+crng = CartesianIndices(2:4)
+indices = simd_cartesian_range!(Vector{eltype(crng)}(), crng)
+@test indices == collect(crng)
+
+crng = CartesianIndices()
+indices = simd_cartesian_range!(Vector{eltype(crng)}(), crng)
+@test indices == vec(collect(crng))
+
+# @simd with array as "range"
+# issue #13869
+function simd_sum_over_array(a)
+    s = zero(eltype(a))
+    @inbounds @simd for x in a
+        s += x
+    end
+    s
+end
+@test 2001000 == simd_sum_over_array(Vector(1:2000))
+@test 2001000 == simd_sum_over_array(Float32[i+j*500 for i=1:500, j=0:3])

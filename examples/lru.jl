@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 module LRUExample
 # An LRU (Least Recently Used) cache is an associative data structure which
 # maintains its contents in an order such that the most recently used item
@@ -23,31 +25,31 @@ import Base.haskey, Base.get
 import Base.setindex!, Base.getindex, Base.delete!, Base.empty!
 import Base.show
 
-abstract LRU{K,V} <: Associative{K,V}
+abstract type LRU{K,V} <: AbstractDict{K,V} end
 
 # Default cache size
 const __MAXCACHE = 1024
 
-type CacheItem{K,V}
+mutable struct CacheItem{K,V}
     k::K
     v::V
 end
 
-type UnboundedLRU{K,V} <: LRU{K,V}
+mutable struct UnboundedLRU{K,V} <: LRU{K,V}
     ht::Dict
     q::Vector{CacheItem}
 
-    UnboundedLRU() = new(Dict(), similar(Array(CacheItem,1), 0))
+    UnboundedLRU{K,V}() where {K,V} = new(Dict(), similar(Vector{CacheItem}(uninitialized, 1), 0))
 end
 UnboundedLRU() = UnboundedLRU{Any, Any}()
 
-type BoundedLRU{K,V} <: LRU{K,V}
+mutable struct BoundedLRU{K,V} <: LRU{K,V}
     ht::Dict
     q::Vector{CacheItem}
     maxsize::Int
 
-    BoundedLRU(m) = new(Dict(), similar(Array(CacheItem,1), 0), m)
-    BoundedLRU() = BoundedLRU(__MAXCACHE)
+    BoundedLRU{K,V}(m) where {K,V} = new(Dict(), similar(Vector{CacheItem}(uninitialized, 1), 0), m)
+    BoundedLRU{K,V}() where {K,V} = BoundedLRU(__MAXCACHE)
 end
 BoundedLRU(m) = BoundedLRU{Any, Any}(m)
 BoundedLRU() = BoundedLRU{Any, Any}()
@@ -56,7 +58,6 @@ BoundedLRU() = BoundedLRU{Any, Any}()
 
 isempty(lru::LRU) = isempty(lru.q)
 length(lru::LRU) = length(lru.q)
-haskey(lru::LRU, key) = haskey(lru.ht, key)
 
 ## associative ##
 
@@ -90,7 +91,7 @@ function getindex(lru::LRU, key)
     item = lru.ht[key]
     idx = locate(lru.q, item)
     splice!(lru.q, idx)
-    unshift!(lru.q, item)
+    pushfirst!(lru.q, item)
     item.v
 end
 
@@ -104,12 +105,12 @@ function setindex!(lru::LRU, v, key)
         item = CacheItem(key, v)
         lru.ht[key] = item
     end
-    unshift!(lru.q, item)
+    pushfirst!(lru.q, item)
 end
 
 # Eviction
-function setindex!{V,K}(lru::BoundedLRU, v::V, key::K)
-    invoke(setindex!, (LRU, V, K), lru, v, key)
+function setindex!(lru::BoundedLRU, v::V, key::K) where {V,K}
+    invoke(setindex!, Tuple{LRU,V,K}, lru, v, key)
     nrm = length(lru) - lru.maxsize
     for i in 1:nrm
         rm = pop!(lru.q)

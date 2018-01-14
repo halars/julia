@@ -1,9 +1,5 @@
-#include "../../deps/openlibm/amd64/bsd_asm.h"
-
-#ifndef _MSC_VER
-.intel_syntax noprefix
-#endif
-ENTRY(jl_setjmp)
+#define CNAME jl_setjmp
+#include "ENTRY.amd64.h"
     mov    rdx,QWORD PTR [rsp]
     mov    QWORD PTR [rcx],0
     mov    QWORD PTR [rcx+8],rbx
@@ -29,4 +25,4 @@ ENTRY(jl_setjmp)
     movaps XMMWORD PTR [rcx+240],xmm15
     xor    rax,rax
     ret
-END(jl_setjmp)
+#include "END.h"

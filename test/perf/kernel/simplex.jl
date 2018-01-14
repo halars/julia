@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 const Basic = 1
 const AtLower = 2
 const AtUpper = 3
@@ -14,7 +16,6 @@ const dualTol = 1e-7
 
 # Data taken from sample greenbea iteration
 function doTwoPassRatioTest()
-
     n = 8000
 
     candidates = zeros(Int,n) # don't count allocation time, assume reuse
@@ -35,7 +36,7 @@ function doTwoPassRatioTest()
         for i in 1:n
             thisState = varstate[i]
             pivotElt = tabrow[i]
-            if (thisState == AtLower && pivotElt > pivotTol) || (thisState == AtUpper && pivotElt < -pivotTol) 
+            if (thisState == AtLower && pivotElt > pivotTol) || (thisState == AtUpper && pivotElt < -pivotTol)
                 candidates[ncandidates += 1] = i
                 ratio = 0.
                 if (pivotElt < 0.)
@@ -66,5 +67,4 @@ function doTwoPassRatioTest()
     end
 
     return time() - t
-
 end

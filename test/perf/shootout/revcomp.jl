@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 # The Computer Language Benchmarks Game
 # http://shootout.alioth.debian.org/
 #
@@ -6,7 +8,7 @@
 # FIXME(davekong) Is there support in Julia for doing more efficient IO and
 # handling of byte arrays?
 
-const revcompdata = {
+const revcompdata = Dict(
    'A'=> 'T', 'a'=> 'T',
    'C'=> 'G', 'c'=> 'G',
    'G'=> 'C', 'g'=> 'C',
@@ -23,7 +25,7 @@ const revcompdata = {
    'D'=> 'H', 'd'=> 'H',
    'B'=> 'V', 'b'=> 'V',
    'N'=> 'N', 'n'=> 'N',
-}
+)
 
 function print_buff(b)
     br = reverse(b)
@@ -39,20 +41,21 @@ end
 
 function revcomp(infile="revcomp-input.txt")
     input = open(infile, "r")
-    buff = Uint8[]
+    buff = UInt8[]
     while true
-        line = readline(input).data
+        line = readuntil(input, UInt8('\n'))
         if isempty(line)
 #            print_buff(buff)
             return
-        elseif line[1] == '>'
+        elseif line[1] == UInt8('>')
 #            print_buff(buff)
-            buff = Uint8[]
+            buff = UInt8[]
 #            write(line)
         else
             l = length(line)-1
-            append!(buff, [uint8(revcompdata[char(line[i])]) for i=1:l])
+            append!(buff, [UInt8(revcompdata[Char(line[i])]) for i=1:l])
         end
     end
+    close(input)
 end
 

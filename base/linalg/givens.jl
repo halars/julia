@@ -1,25 +1,78 @@
-immutable Givens{T} <: AbstractMatrix{T}
-    size::Int
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+# givensAlgorithm functions are derived from LAPACK, see below
+
+abstract type AbstractRotation{T} end
+
+transpose(R::AbstractRotation) = error("transpose not implemented for $(typeof(R)). Consider using adjoint instead of transpose.")
+
+function *(R::AbstractRotation{T}, A::AbstractVecOrMat{S}) where {T,S}
+    TS = typeof(zero(T)*zero(S) + zero(T)*zero(S))
+    mul!(convert(AbstractRotation{TS}, R), TS == S ? copy(A) : convert(AbstractArray{TS}, A))
+end
+*(A::AbstractVector, adjR::Adjoint{<:Any,<:AbstractRotation}) = _absvecormat_mul_adjrot(A, adjR)
+*(A::AbstractMatrix, adjR::Adjoint{<:Any,<:AbstractRotation}) = _absvecormat_mul_adjrot(A, adjR)
+function _absvecormat_mul_adjrot(A::AbstractVecOrMat{T}, adjR::Adjoint{<:Any,<:AbstractRotation{S}}) where {T,S}
+    R = adjR.parent
+    TS = typeof(zero(T)*zero(S) + zero(T)*zero(S))
+    mul!(TS == T ? copy(A) : convert(AbstractArray{TS}, A), adjoint(convert(AbstractRotation{TS}, R)))
+end
+"""
+    LinAlg.Givens(i1,i2,c,s) -> G
+
+A Givens rotation linear operator. The fields `c` and `s` represent the cosine and sine of
+the rotation angle, respectively. The `Givens` type supports left multiplication `G*A` and
+conjugated transpose right multiplication `A*G'`. The type doesn't have a `size` and can
+therefore be multiplied with matrices of arbitrary size as long as `i2<=size(A,2)` for
+`G*A` or `i2<=size(A,1)` for `A*G'`.
+
+See also: [`givens`](@ref)
+"""
+struct Givens{T} <: AbstractRotation{T}
     i1::Int
     i2::Int
     c::T
     s::T
-    r::T
 end
-type Rotation{T}
-    rotations::Vector{T}
+mutable struct Rotation{T} <: AbstractRotation{T}
+    rotations::Vector{Givens{T}}
 end
-typealias AbstractRotation Union(Givens, Rotation)
 
-function givensAlgorithm{T<:FloatingPoint}(f::T, g::T)
-    zeropar = zero(T)
+convert(::Type{T}, r::T) where {T<:AbstractRotation} = r
+convert(::Type{T}, r::AbstractRotation) where {T<:AbstractRotation} = T(r)
+
+Givens{T}(G::Givens{T}) where {T} = G
+Givens{T}(G::Givens) where {T} = Givens(G.i1, G.i2, convert(T, G.c), convert(T, G.s))
+Rotation{T}(R::Rotation{T}) where {T} = R
+Rotation{T}(R::Rotation) where {T} = Rotation{T}([Givens{T}(g) for g in R.rotations])
+AbstractRotation{T}(G::Givens) where {T} = Givens{T}(G)
+AbstractRotation{T}(R::Rotation) where {T} = Rotation{T}(R)
+
+adjoint(G::Givens) = Adjoint(G)
+adjoint(R::Rotation) = Adjoint(R)
+Base.copy(aG::Adjoint{<:Any,<:Givens}) = (G = aG.parent; Givens(G.i1, G.i2, conj(G.c), -G.s))
+Base.copy(aR::Adjoint{<:Any,Rotation{T}}) where {T} = Rotation{T}(reverse!([copy(r') for r in aR.parent.rotations]))
+
+realmin2(::Type{Float32}) = reinterpret(Float32, 0x26000000)
+realmin2(::Type{Float64}) = reinterpret(Float64, 0x21a0000000000000)
+realmin2(::Type{T}) where {T} = (twopar = 2one(T); twopar^trunc(Integer,log(realmin(T)/eps(T))/log(twopar)/twopar))
+
+# derived from LAPACK's dlartg
+# Copyright:
+# Univ. of Tennessee
+# Univ. of California Berkeley
+# Univ. of Colorado Denver
+# NAG Ltd.
+function givensAlgorithm(f::T, g::T) where T<:AbstractFloat
     onepar = one(T)
     twopar = 2one(T)
+    T0 = typeof(onepar) # dimensionless
+    zeropar = T0(zero(T)) # must be dimensionless
 
-    safmin = realmin(T)
-    epspar = eps(T)
-    safmn2 = twopar^itrunc(log(safmin/epspar)/log(twopar)/twopar)
-    safmx2 = onepar/safmn2
+    # need both dimensionful and dimensionless versions of these:
+    safmn2 = realmin2(T0)
+    safmn2u = realmin2(T)
+    safmx2 = one(T)/safmn2
+    safmx2u = oneunit(T)/safmn2
 
     if g == 0
         cs = onepar
@@ -33,38 +86,38 @@ function givensAlgorithm{T<:FloatingPoint}(f::T, g::T)
         f1 = f
         g1 = g
         scalepar = max(abs(f1), abs(g1))
-        if scalepar >= safmx2
+        if scalepar >= safmx2u
             count = 0
             while true
                 count += 1
                 f1 *= safmn2
                 g1 *= safmn2
                 scalepar = max(abs(f1), abs(g1))
-                if scalepar < safmx2 break end
+                if scalepar < safmx2u break end
             end
-            r = hypot(f1, g1)
+            r = sqrt(f1*f1 + g1*g1)
             cs = f1/r
             sn = g1/r
             for i = 1:count
                 r *= safmx2
             end
-        elseif scalepar <= safmn2
+        elseif scalepar <= safmn2u
             count = 0
             while true
                 count += 1
                 f1 *= safmx2
                 g1 *= safmx2
                 scalepar = max(abs(f1), abs(g1))
-                if scalepar > safmn2 break end
+                if scalepar > safmn2u break end
             end
-            r = hypot(f1, g1)
+            r = sqrt(f1*f1 + g1*g1)
             cs = f1/r
             sn = g1/r
             for i = 1:count
                 r *= safmn2
             end
         else
-            r = hypot(f1, g1)
+            r = sqrt(f1*f1 + g1*g1)
             cs = f1/r
             sn = g1/r
         end
@@ -77,28 +130,37 @@ function givensAlgorithm{T<:FloatingPoint}(f::T, g::T)
     return cs, sn, r
 end
 
-function givensAlgorithm{T<:FloatingPoint}(f::Complex{T}, g::Complex{T})
-    twopar, onepar, zeropar = 2one(T), one(T), zero(T)
-    czero = zero(Complex{T})
+# derived from LAPACK's zlartg
+# Copyright:
+# Univ. of Tennessee
+# Univ. of California Berkeley
+# Univ. of Colorado Denver
+# NAG Ltd.
+function givensAlgorithm(f::Complex{T}, g::Complex{T}) where T<:AbstractFloat
+    twopar, onepar = 2one(T), one(T)
+    T0 = typeof(onepar) # dimensionless
+    zeropar = T0(zero(T)) # must be dimensionless
+    czero = complex(zeropar)
 
     abs1(ff) = max(abs(real(ff)), abs(imag(ff)))
-    safmin = realmin(T)
-    epspar = eps(T)
-    safmn2 = twopar^itrunc(log(safmin/epspar)/log(twopar)/twopar)
-    safmx2 = onepar/safmn2
+    safmin = realmin(T0)
+    safmn2 = realmin2(T0)
+    safmn2u = realmin2(T)
+    safmx2 = one(T)/safmn2
+    safmx2u = oneunit(T)/safmn2
     scalepar = max(abs1(f), abs1(g))
     fs = f
     gs = g
     count = 0
-    if scalepar >= safmx2
+    if scalepar >= safmx2u
         while true
             count += 1
             fs *= safmn2
             gs *= safmn2
             scalepar *= safmn2
-            if scalepar < safmx2 break end
+            if scalepar < safmx2u break end
         end
-    elseif scalepar <= safmn2
+    elseif scalepar <= safmn2u
         if g == 0
             cs = onepar
             sn = czero
@@ -110,37 +172,35 @@ function givensAlgorithm{T<:FloatingPoint}(f::Complex{T}, g::Complex{T})
             fs *= safmx2
             gs *= safmx2
             scalepar *= safmx2
-            if scalepar > safmn2 break end
+            if scalepar > safmn2u break end
         end
     end
     f2 = abs2(fs)
     g2 = abs2(gs)
-    if f2 <= max(g2, onepar)*safmin
-
-     # This is a rare case: F is very small.
-
+    if f2 <= max(g2, oneunit(T))*safmin
+        # This is a rare case: F is very small.
         if f == 0
-            cs = zero
-            r = hypot(real(g), imag(g))
-        # do complex/real division explicitly with two real divisions
+            cs = zero(T)
+            r = complex(hypot(real(g), imag(g)))
+            # do complex/real division explicitly with two real divisions
             d = hypot(real(gs), imag(gs))
             sn = complex(real(gs)/d, -imag(gs)/d)
             return cs, sn, r
         end
         f2s = hypot(real(fs), imag(fs))
-     # g2 and g2s are accurate
-     # g2 is at least safmin, and g2s is at least safmn2
+        # g2 and g2s are accurate
+        # g2 is at least safmin, and g2s is at least safmn2
         g2s = sqrt(g2)
-     # error in cs from underflow in f2s is at most
-     # unfl / safmn2 .lt. sqrt(unfl*eps) .lt. eps
-     # if max(g2,one)=g2, then f2 .lt. g2*safmin,
-     # and so cs .lt. sqrt(safmin)
-     # if max(g2,one)=one, then f2 .lt. safmin
-     # and so cs .lt. sqrt(safmin)/safmn2 = sqrt(eps)
-     # therefore, cs = f2s/g2s / sqrt( 1 + (f2s/g2s)**2 ) = f2s/g2s
+        # error in cs from underflow in f2s is at most
+        # unfl / safmn2 .lt. sqrt(unfl*eps) .lt. eps
+        # if max(g2,one)=g2, then f2 .lt. g2*safmin,
+        # and so cs .lt. sqrt(safmin)
+        # if max(g2,one)=one, then f2 .lt. safmin
+        # and so cs .lt. sqrt(safmin)/safmn2 = sqrt(eps)
+        # therefore, cs = f2s/g2s / sqrt( 1 + (f2s/g2s)**2 ) = f2s/g2s
         cs = f2s/g2s
-     # make sure abs(ff) = 1
-     # do complex/real division explicitly with 2 real divisions
+        # make sure abs(ff) = 1
+        # do complex/real division explicitly with 2 real divisions
         if abs1(f) > 1
             d = hypot(real(f), imag(f))
             ff = complex(real(f)/d, imag(f)/d)
@@ -153,17 +213,15 @@ function givensAlgorithm{T<:FloatingPoint}(f::Complex{T}, g::Complex{T})
         sn = ff*complex(real(gs)/g2s, -imag(gs)/g2s)
         r = cs*f + sn*g
     else
-
-     # This is the most common case.
-     # Neither F2 nor F2/G2 are less than SAFMIN
-     # F2S cannot overflow, and it is accurate
-
+        # This is the most common case.
+        # Neither F2 nor F2/G2 are less than SAFMIN
+        # F2S cannot overflow, and it is accurate
         f2s = sqrt(onepar + g2/f2)
-     # do the f2s(real)*fs(complex) multiply with two real multiplies
+        # do the f2s(real)*fs(complex) multiply with two real multiplies
         r = complex(f2s*real(fs), f2s*imag(fs))
         cs = onepar/f2s
         d = f2 + g2
-     # do complex/real division explicitly with two real divisions
+        # do complex/real division explicitly with two real divisions
         sn = complex(real(r)/d, imag(r)/d)
         sn *= conj(gs)
         if count != 0
@@ -181,61 +239,163 @@ function givensAlgorithm{T<:FloatingPoint}(f::Complex{T}, g::Complex{T})
     return cs, sn, r
 end
 
-function givens{T}(f::T, g::T, i1::Integer, i2::Integer, size::Integer)
-    i2 <= size || error("indices cannot be larger than size Givens rotation matrix")
-    i1 < i2 || error("second index must be larger than the first")
-    h = givensAlgorithm(f, g)
-    Givens(size, i1, i2, convert(T, h[1]), convert(T, h[2]), convert(T, h[3]))
+"""
+
+    givens(f::T, g::T, i1::Integer, i2::Integer) where {T} -> (G::Givens, r::T)
+
+Computes the Givens rotation `G` and scalar `r` such that for any vector `x` where
+```
+x[i1] = f
+x[i2] = g
+```
+the result of the multiplication
+```
+y = G*x
+```
+has the property that
+```
+y[i1] = r
+y[i2] = 0
+```
+
+See also: [`LinAlg.Givens`](@ref)
+"""
+function givens(f::T, g::T, i1::Integer, i2::Integer) where T
+    if i1 == i2
+        throw(ArgumentError("Indices must be distinct."))
+    end
+    c, s, r = givensAlgorithm(f, g)
+    if i1 > i2
+        s = -conj(s)
+        i1,i2 = i2,i1
+    end
+    Givens(i1, i2, convert(T, c), convert(T, s)), r
+end
+"""
+    givens(A::AbstractArray, i1::Integer, i2::Integer, j::Integer) -> (G::Givens, r)
+
+Computes the Givens rotation `G` and scalar `r` such that the result of the multiplication
+```
+B = G*A
+```
+has the property that
+```
+B[i1,j] = r
+B[i2,j] = 0
+```
+
+See also: [`LinAlg.Givens`](@ref)
+"""
+givens(A::AbstractMatrix, i1::Integer, i2::Integer, j::Integer) =
+    givens(A[i1,j], A[i2,j],i1,i2)
+
+
+"""
+    givens(x::AbstractVector, i1::Integer, i2::Integer) -> (G::Givens, r)
+
+Computes the Givens rotation `G` and scalar `r` such that the result of the multiplication
+```
+B = G*x
+```
+has the property that
+```
+B[i1] = r
+B[i2] = 0
+```
+
+See also: [`LinAlg.Givens`](@ref)
+"""
+givens(x::AbstractVector, i1::Integer, i2::Integer) =
+    givens(x[i1], x[i2], i1, i2)
+
+
+function getindex(G::Givens, i::Integer, j::Integer)
+    if i == j
+        if i == G.i1 || i == G.i2
+            G.c
+        else
+            oneunit(G.c)
+        end
+    elseif i == G.i1 && j == G.i2
+        G.s
+    elseif i == G.i2 && j == G.i1
+        -conj(G.s)
+    else
+        zero(G.s)
+    end
 end
 
-function givens{T}(A::AbstractMatrix{T}, i1::Integer, i2::Integer, col::Integer)
-    i1 < i2 || error("second index must be larger than the first")
-    h = givensAlgorithm(A[i1,col], A[i2,col])
-    Givens(size(A, 1), i1, i2, convert(T, h[1]), convert(T, h[2]), convert(T, h[3]))
-end
 
-*{T}(G1::Givens{T}, G2::Givens{T}) = Rotation(push!(push!(Givens{T}[], G2), G1))
-*(G::Givens, B::BitArray{2}) = error("method not defined")
-*{TBf,TBi}(G::Givens, B::SparseMatrixCSC{TBf,TBi}) = error("method not defined")
-*(R::AbstractRotation, A::AbstractMatrix) = A_mul_B!(R, copy(A))
+mul!(G1::Givens, G2::Givens) = error("Operation not supported. Consider *")
 
-A_mul_Bc(A::AbstractMatrix, R::Rotation) = A_mul_Bc!(copy(A), R)
-
-getindex(G::Givens, i::Integer, j::Integer) = i == j ? (i == G.i1 || i == G.i2 ? G.c : one(G.c)) : (i == G.i1 && j == G.i2 ? G.s : (i == G.i2 && j == G.i1 ? -G.s : zero(G.s)))
-size(G::Givens) = (G.size, G.size)
-size(G::Givens, i::Integer) = 1 <= i <= 2 ? G.size : 1
-A_mul_B!(G1::Givens, G2::Givens) = error("Operation not supported. Consider *")
-function A_mul_B!(G::Givens, A::AbstractMatrix)
-    m, n = size(A)
-    for i = 1:n
-        tmp = G.c*A[G.i1,i] + G.s*A[G.i2,i]
-        A[G.i2,i] = G.c*A[G.i2,i] - conj(G.s)*A[G.i1,i]
-        A[G.i1,i] = tmp
+function mul!(G::Givens, A::AbstractVecOrMat)
+    m, n = size(A, 1), size(A, 2)
+    if G.i2 > m
+        throw(DimensionMismatch("column indices for rotation are outside the matrix"))
+    end
+    @inbounds @simd for i = 1:n
+        a1, a2 = A[G.i1,i], A[G.i2,i]
+        A[G.i1,i] =       G.c *a1 + G.s*a2
+        A[G.i2,i] = -conj(G.s)*a1 + G.c*a2
     end
     return A
 end
-function A_mul_Bc!(A::AbstractMatrix, G::Givens)
-    m, n = size(A)
-    for i = 1:m
-        tmp = G.c*A[i,G.i1] + conj(G.s)*A[i,G.i2]
-        A[i,G.i2] = G.c*A[i,G.i2] - G.s*A[i,G.i1]
-        A[i,G.i1] = tmp
+function mul!(A::AbstractMatrix, adjG::Adjoint{<:Any,<:Givens})
+    G = adjG.parent
+    m, n = size(A, 1), size(A, 2)
+    if G.i2 > n
+        throw(DimensionMismatch("column indices for rotation are outside the matrix"))
+    end
+    @inbounds @simd for i = 1:m
+        a1, a2 = A[i,G.i1], A[i,G.i2]
+        A[i,G.i1] =  a1*G.c + a2*conj(G.s)
+        A[i,G.i2] = -a1*G.s + a2*G.c
     end
     return A
 end
-function A_mul_B!(G::Givens, R::Rotation)
+function mul!(G::Givens, R::Rotation)
     push!(R.rotations, G)
     return R
 end
-function A_mul_B!(R::Rotation, A::AbstractMatrix)
-    for i = 1:length(R.rotations)
-        A_mul_B!(R.rotations[i], A)
+function mul!(R::Rotation, A::AbstractMatrix)
+    @inbounds for i = 1:length(R.rotations)
+        mul!(R.rotations[i], A)
     end
     return A
 end
-function A_mul_Bc!(A::AbstractMatrix, R::Rotation)
-    for i = 1:length(R.rotations)
-        A_mul_Bc!(A, R.rotations[i])
+function mul!(A::AbstractMatrix, adjR::Adjoint{<:Any,<:Rotation})
+    R = adjR.parent
+    @inbounds for i = 1:length(R.rotations)
+        mul!(A, adjoint(R.rotations[i]))
     end
     return A
 end
+*(G1::Givens{T}, G2::Givens{T}) where {T} = Rotation(push!(push!(Givens{T}[], G2), G1))
+
+# TODO: None of the following disambiguation methods are great. They should perhaps
+# instead be MethodErrors, or revised.
+#
+# dismabiguation methods: *(Adj/Trans of AbsVec or AbsMat, Adj of AbstractRotation)
+*(A::Adjoint{<:Any,<:AbstractVector}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Adjoint{<:Any,<:AbstractMatrix}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Transpose{<:Any,<:AbstractVector}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Transpose{<:Any,<:AbstractMatrix}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+# dismabiguation methods: *(Adj/Trans of AbsTri or RealHermSymComplex{Herm|Sym}, Adj of AbstractRotation)
+*(A::Adjoint{<:Any,<:AbstractTriangular}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Transpose{<:Any,<:AbstractTriangular}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Adjoint{<:Any,<:RealHermSymComplexHerm}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+*(A::Transpose{<:Any,<:RealHermSymComplexSym}, B::Adjoint{<:Any,<:AbstractRotation}) = copy(A) * B
+# dismabiguation methods: *(Diag/AbsTri, Adj of AbstractRotation)
+*(A::Diagonal, B::Adjoint{<:Any,<:AbstractRotation}) = A * copy(B)
+*(A::AbstractTriangular, B::Adjoint{<:Any,<:AbstractRotation}) = A * copy(B)
+# moar disambiguation
+mul!(A::QRPackedQ, B::Adjoint{<:Any,<:Givens}) = throw(MethodError(mul!, (A, B)))
+mul!(A::QRPackedQ, B::Adjoint{<:Any,<:Rotation}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Adjoint{<:Any,<:QRPackedQ}, B::Adjoint{<:Any,<:Givens}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Adjoint{<:Any,<:QRPackedQ}, B::Adjoint{<:Any,<:Rotation}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Diagonal, B::Adjoint{<:Any,<:Givens}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Diagonal, B::Adjoint{<:Any,<:Rotation}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Adjoint{<:Any,<:Diagonal}, B::Adjoint{<:Any,<:Givens}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Adjoint{<:Any,<:Diagonal}, B::Adjoint{<:Any,<:Rotation}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Transpose{<:Any,<:Diagonal}, B::Adjoint{<:Any,<:Rotation}) = throw(MethodError(mul!, (A, B)))
+mul!(A::Transpose{<:Any,<:Diagonal}, B::Adjoint{<:Any,<:Givens}) = throw(MethodError(mul!, (A, B)))

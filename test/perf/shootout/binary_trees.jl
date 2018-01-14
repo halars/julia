@@ -1,26 +1,28 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 #
 # The Computer Language Benchmarks Game
 # binary-trees benchmark
 # http://shootout.alioth.debian.org/u32/performance.php?test=binarytrees
-# 
+#
 # Ported from an OCaml version
-# 
+#
 
-abstract BTree
+abstract type BTree end
 
-type Empty <: BTree
+mutable struct Empty <: BTree
 end
 
-type Node <: BTree
+mutable struct Node <: BTree
     info
     left::BTree
     right::BTree
 end
 
 function make(val, d)
-    if d == 0 
+    if d == 0
         Node(val, Empty(), Empty())
-    else 
+    else
         nval = val * 2
         Node(val, make(nval-1, d-1), make(nval, d-1))
     end
@@ -37,14 +39,14 @@ function loop_depths(d, min_depth, max_depth)
             c += check(make(i, d)) + check(make(-i, d))
         end
 #        @printf("%i\t trees of depth %i\t check: %i\n", 2*niter, d, c)
-        d += 2        
+        d += 2
     end
 end
 
 function binary_trees(N::Int=10)
-    const min_depth = 4
-    const max_depth = N
-    const stretch_depth = max_depth + 1
+    min_depth = 4
+    max_depth = N
+    stretch_depth = max_depth + 1
 
     # create and check stretch tree
     let c = check(make(0, stretch_depth))

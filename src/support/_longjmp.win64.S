@@ -1,9 +1,5 @@
-#include "../../deps/openlibm/amd64/bsd_asm.h"
-
-#ifndef _MSC_VER
-.intel_syntax noprefix
-#endif
-ENTRY(jl_longjmp)
+#define CNAME jl_longjmp
+#include "ENTRY.amd64.h"
     mov    rbx,QWORD PTR [rcx+8]
     mov    rsp,QWORD PTR [rcx+16]
     mov    rbp,QWORD PTR [rcx+24]
@@ -30,4 +26,4 @@ ENTRY(jl_longjmp)
     inc    eax
 a:  mov    QWORD PTR [rsp],r8
     ret
-END(jl_longjmp)
+#include "END.h"

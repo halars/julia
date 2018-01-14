@@ -1,3 +1,5 @@
+// This file is a part of Julia. License is MIT: https://julialang.org/license
+
 /* Benchmark implementing the board logic for the game of go and
  * exercising it by playing random games. Derived from
  * http://www.lysator.liu.se/~gunnar/gtp/brown-1.0.tar.gz
@@ -106,7 +108,7 @@ static int
 legal_move(int i, int j, int color)
 {
   int other = OTHER_COLOR(color);
-  
+
   /* Pass is always legal. */
   if (pass_move(i, j))
     return 1;
@@ -217,7 +219,7 @@ same_string(int pos1, int pos2)
       return 1;
     pos = next_stone[pos];
   } while (pos != pos1);
-  
+
   return 0;
 }
 
@@ -282,7 +284,7 @@ play_move(int i, int j, int color)
      * than one direction.
      */
     if (on_board(ai, aj) && board[pos2] == color && !same_string(pos, pos2)) {
-      /* The strings are linked together simply by swapping the the
+      /* The strings are linked together simply by swapping the
        * next_stone pointers.
        */
       int tmp = next_stone[pos2];
@@ -307,7 +309,7 @@ play_move(int i, int j, int color)
       if (on_board(ai, aj) && get_board(ai, aj) == EMPTY)
 	break;
     }
-    
+
     if (!has_additional_liberty(i, j, ai, aj)) {
       ko_i = ai;
       ko_j = aj;
@@ -410,7 +412,7 @@ compute_final_status(void)
 
   for (pos = 0; pos < board_size * board_size; pos++)
     final_status[pos] = UNKNOWN;
-  
+
   for (i = 0; i < board_size; i++)
     for (j = 0; j < board_size; j++)
       if (get_board(i, j) == EMPTY)

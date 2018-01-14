@@ -1,918 +1,1193 @@
-Julia v0.3.0 Release Notes
+Julia v0.7.0 Release Notes
 ==========================
 
 New language features
 ---------------------
 
-  * Greatly enhanced performance for passing and returning `Tuple`s ([#4042]).
+  * Local variables can be tested for being defined
+    using the new `@isdefined variable` macro ([#22281]).
 
-  * `Tuple`s (of `Integer`s, `Symbol`s, or `Bool`s) can now be used as type
-    parameters ([#5164]).
+  * Destructuring in function arguments: when an expression such as `(x, y)` is used as
+    a function argument name, the argument is unpacked into local variables `x` and `y`
+    as in the assignment `(x, y) = arg` ([#6614]).
 
-  * An additional default "inner" constructor accepting any arguments is now
-    generated. Constructors that look like `MyType(a, b) = new(a, b)` do not
-    need to be added manually ([#4026], [#7071]).
+  * Named tuples, with the syntax `(a=1, b=2)`. These behave very similarly to tuples,
+    except components can also be accessed by name using dot syntax `t.a` ([#22194]).
 
-  * Expanded array type hierarchy to include an abstract ``DenseArray`` for
-    in-memory arrays with standard strided storage ([#987], [#2345],
-    [#6212]).
+  * Keyword argument containers (`kw` in `f(; kw...)`) are now named tuples. Dictionary
+    functions like `haskey` and indexing can be used on them, and name-value pairs can be
+    iterated using `pairs(kw)`. `kw` can no longer contain multiple entries for the same
+    argument name ([#4916]).
 
-  * When reloading code, types whose definitions have not changed can be
-    ignored in some cases.
+  * Custom infix operators can now be defined by appending Unicode
+    combining marks, primes, and sub/superscripts to other operators.
+    For example, `+̂ₐ″` is parsed as an infix operator with the same
+    precedence as `+` ([#22089]).
 
-  * Binary `~` now parses as a vararg macro call to `@~`.
-    For example `x~y~z` => `@~ x y z` ([#4882]).
+  * The macro call syntax `@macroname[args]` is now available and is parsed
+    as `@macroname([args])` ([#23519]).
 
-  * Structure fields can now be accessed by index ([#4806]).
+  * The construct `if @generated ...; else ...; end` can be used to provide both
+    `@generated` and normal implementations of part of a function. Surrounding code
+    will be common to both versions ([#23168]).
 
-  * If a module contains a function `__init__()`, it will be called when
-    the module is first loaded, and on process startup if a pre-compiled
-    version of the module is present ([#1268]).
+  * Added `⟂` (`\perp`) operator with comparison precedence ([#24404]).
 
-  * Multi-line comments ([#69], [#6128]): `#= .... =#`
+  * The `missing` singleton object (of type `Missing`) has been added to represent
+    missing values ([#24653]). It propagates through standard operators and mathematical functions,
+    and implements three-valued logic, similar to SQLs `NULL` and R's `NA`.
 
-  * `--bounds-check=yes|no` compiler option
+  * Field access via dot-syntax can now be overloaded by adding methods to
+    `Base.getproperty` and `Base.setproperty!` ([#1974]).
 
-  * Unicode identifiers are normalized (NFC) so that different encodings
-    of equivalent strings are treated as the same identifier ([#5462]).
+  * Values for `Enum`s can now be specified inside of a `begin` block when using the
+    `@enum` macro ([#25424]).
 
-  * The set of characters permitted in identifiers has been restricted based
-    on Unicode categories. Generally, punctuation, formatting and control
-    characters, and operator symbols are not allowed in identifiers.
-    Number-like characters cannot begin identifiers ([#5936]).
+Language changes
+----------------
 
-  * Define a limited number of infix Unicode operators ([#552], [#6582]):
+  * The syntax for parametric methods, `function f{T}(x::T)`, has been
+    changed to `function f(x::T) where {T}` ([#11310]).
 
-    | Precedence class | Operators (with synonyms, if any)
-    | ---------------- | ---------------------------------
-    |   ==             |  ≥ (>=) ≤ (<=) ≡ (===) ≠ (!=) ≢ (!==) .≥ (.>=) .≤ (.<=) .!= (.≠) ∈ (`in`) ∉ (`(x,y)->!in(x, y)`) ∋ (`(x,y)->in(y, x)`) ∌ (`(x,y)->!in(y, x)`) ⊆ (`issubset`) ⊈ (`(x,y)->!issubset(x, y)`) ⊊ (`(x,y)->x⊆y && x!=y`) |
-    |   +              | ∪ (`union`) |
-    |   *              | ÷ (`div`) ⋅ (`dot`) × (`cross`) ∩ (`intersect`) |
-    |   unary          | √ ∛ |
+  * The fallback constructor that calls `convert` is deprecated. Instead, new types should
+    prefer to define constructors, and add `convert` methods that call those constructors
+    only as necessary ([#15120]).
 
-    In addition to these, many of the Unicode operator symbols are parsed
-    as infix operators and are available for user-defined methods ([#6929]).
+  * The syntax `1.+2` is deprecated, since it is ambiguous: it could mean either
+    `1 .+ 2` (the current meaning) or `1. + 2` ([#19089]).
 
-  * Improved reporting of syntax errors ([#6179])
+  * In string and character literals, backslash `\` may no longer
+    precede unrecognized escape characters ([#22800]).
 
-  * `break` inside a `for` loop with multiple ranges now exits the entire loop nest ([#5154])
+  * Juxtaposing binary, octal, and hexadecimal literals is deprecated, since it can lead to
+    confusing code such as `0xapi == 0xa * pi` ([#16356]).
 
-  * Local goto statements using the `@goto` and `@label` macros. ([#101])
+  * Declaring arguments as `x::ANY` to avoid specialization has been replaced
+    by `@nospecialize x`. ([#22666]).
 
-REPL improvements
------------------
+  * Keyword argument default values are now evaluated in successive scopes ---
+    the scope for each expression includes only previous keyword arguments, in
+    left-to-right order ([#17240]).
 
-  * New native-Julia REPL implementation, eliminating many problems
-    stemming from the old GNU Readline-based REPL ([#6270]).
+  * The parsing of `1<<2*3` as `1<<(2*3)` is deprecated, and will change to
+    `(1<<2)*3` in a future version ([#13079]).
 
-  * Tab-substitution of LaTeX math symbols (e.g. `\alpha` by `α`) ([#6911]).
-    This also works in IJulia and in Emacs ([#6920]).
+  * The parsing of `<|` is now right associative. `|>` remains left associative ([#24153]).
 
-  * `workspace()` function for obtaining a fresh workspace ([#1195]).
+  * `{ }` expressions now use `braces` and `bracescat` as expression heads instead
+    of `cell1d` and `cell2d`, and parse similarly to `vect` and `vcat` ([#8470]).
+
+  * Nested `if` expressions that arise from the keyword `elseif` now use `elseif`
+    as their expression head instead of `if` ([#21774]).
+
+  * `let` blocks now parse the same as `for` loops; the first argument is either an
+    assignment or `block` of assignments, and the second argument is a block of
+    statements ([#21774]).
+
+  * `do` syntax now parses to an expression with head `:do`, instead of as a function
+    call ([#21774]).
+
+  * Parsed and lowered forms of type definitions have been synchronized with their
+    new keywords ([#23157]). Expression heads are renamed as follows:
+
+    + `type`           => `struct`
+
+    + `bitstype`       => `primitive` (order of arguments is also reversed, to match syntax)
+
+    + `composite_type` => `struct_type`
+
+    + `bits_type`      => `primitive_type`
+
+  * The `global` keyword now only introduces a new binding if one doesn't already exist
+    in the module.
+    This means that assignment to a global (`global sin = 3`) may now throw the error:
+    "cannot assign variable Base.sin from module Main", rather than emitting a warning.
+    Additionally, the new bindings are now created before the statement is executed.
+    For example, `f() = (global sin = "gluttony"; nothing)` will now resolve which module
+    contains `sin` eagerly, rather than delaying that decision until `f` is run. ([#22984]).
+
+  * Uninitialized `BitArray` constructors of the form `BitArray[{N}](shape...)` have been
+    deprecated in favor of equivalents accepting `uninitialized` (an alias for
+    `Uninitialized()`) as their first argument, as in
+    `BitArray[{N}](uninitialized, shape...)`. For example, `BitVector(3)` is now
+    `BitVector(uninitialized, 3)`, `BitMatrix((2, 4))` is now
+    `BitMatrix(uninitialized, (2, 4))`, and `BitArray{3}(11, 13, 17)` is now
+    `BitArray{3}(uninitialized, 11, 14, 17)` ([#24785]).
+
+  * Dispatch rules have been simplified:
+    method matching is now determined exclusively by subtyping;
+    the rule that method type parameters must also be captured has been removed.
+    Instead, attempting to access the unconstrained parameters will throw an `UndefVarError`.
+    Linting in package tests is recommended to confirm that the set of methods
+    which might throw `UndefVarError` when accessing the static parameters
+    (`need_to_handle_undef_sparam = Set{Any}(m.sig for m in Test.detect_unbound_args(Base, recursive=true))`)
+    is equal (`==`) to some known set (`expected = Set()`). ([#23117])
+
+  * `const` declarations on local variables were previously ignored. They now give a
+    warning, so that this syntax can be disallowed or given a new meaning in a
+    future version ([#5148]).
+
+  * Placing an expression after `catch`, as in `catch f(x)`, is deprecated.
+    Use `catch; f(x)` instead ([#19987]).
+
+  * In `for i = ...`, if a local variable `i` already existed it would be overwritten
+    during the loop. This behavior is deprecated, and in the future `for` loop variables
+    will always be new variables local to the loop ([#22314]).
+    The old behavior of overwriting an existing variable is available via `for outer i = ...`.
+
+  * In `for i in x`, `x` used to be evaluated in a new scope enclosing the `for` loop.
+    Now it is evaluated in the scope outside the `for` loop.
+
+  * Variable bindings local to `while` loop bodies are now freshly allocated on each loop iteration,
+    matching the behavior of `for` loops.
+
+  * Prefix `&` for by-reference arguments to `ccall` has been deprecated in favor of
+    `Ref` argument types ([#6080]).
+
+  * The constructor `Ref(x::T)` now always returns a `Ref{T}` ([#21527]).
+
+  * All line numbers in ASTs are represented by `LineNumberNode`s; the `:line` expression
+    head is no longer used. `QuoteNode`s are also consistently used for quoted symbols instead
+    of the `:quote` expression head (though `:quote` `Expr`s are still used for quoted
+    expressions) ([#23885]).
+
+  * The `+` and `-` methods for `Number` and `UniformScaling` are not ambiguous anymore since `+`
+    and `-` no longer do automatic broadcasting. Hence the methods for `UniformScaling` and `Number` are
+    no longer deprecated ([#23923]).
+
+  * The keyword `importall` is deprecated. Use `using` and/or individual `import` statements
+    instead ([#22789]).
+
+  * `reduce(+, [...])` and `reduce(*, [...])` no longer widen the iterated over arguments to
+    system word size. `sum` and `prod` still preserve this behavior. ([#22825])
+
+  * Like `_`, variable names consisting only of underscores can be assigned,
+    but accessing their values is deprecated ([#24221]).
+
+  * Raw string literal escaping rules have been changed to make it possible to write all strings.
+    The rule is that backslashes escape both quotes and other backslashes, but only when a sequence
+    of backslashes precedes a quote character. Thus, 2n backslashes followed by a quote encodes n
+    backslashes and the end of the literal while 2n+1 backslashes followed by a quote encodes n
+    backslashes followed by a quote character ([#22926]).
+
+  * The syntax `(x...)` for constructing a tuple is deprecated; use `(x...,)` instead ([#24452]).
+
+  * Non-parenthesized interpolated variables in strings, e.g. `"$x"`, must be followed
+    by a character that will never be an allowed identifier character (currently
+    operators, space/control characters, or common punctuation characters) ([#25231]).
+
+  * The syntax `using A.B` can now only be used when `A.B` is a module, and the syntax
+    `using A: B` can only be used for adding single bindings ([#8000]).
+
+  * `=>` now has its own precedence level, giving it strictly higher precedence than
+    `=` and `,` ([#25391]).
+
+Breaking changes
+----------------
+
+This section lists changes that do not have deprecation warnings.
+
+  * `getindex(s::String, r::UnitRange{Int})` now throws `UnicodeError` if `last(r)`
+    is not a valid index into `s` ([#22572]).
+
+  * `ntuple(f, n::Integer)` throws `ArgumentError` if `n` is negative.
+    Previously an empty tuple was returned ([#21697]).
+
+  * Juxtaposing string literals (e.g. `"x"y`) is now a syntax error ([#20575]).
+
+  * `finalizer(function, object)` now returns `object` rather than `nothing` ([#24679]).
+
+  * The constructor of `SubString` now checks if the requsted view range
+    is defined by valid indices in the parent `AbstractString` ([#22511]).
+
+  * Macro calls with `for` expressions are now parsed as generators inside
+    function argument lists ([#18650]). Examples:
+
+    + `sum(@inbounds a[i] for i = 1:n)` used to give a syntax error, but is now
+      parsed as `sum(@inbounds(a[i]) for i = 1:n)`.
+
+    + `sum(@m x for i = 1:n end)` used to parse the argument to `sum` as a 2-argument
+      call to macro `@m`, but now parses it as a generator plus a syntax error
+      for the dangling `end`.
+
+  * `@__DIR__` returns the current working directory rather than `nothing` when not run
+    from a file ([#21759]).
+
+  * `@__FILE__` and `@__DIR__` return information relative to the file that it was parsed from,
+    rather than from the task-local `SOURCE_PATH` global when it was expanded.
+
+  * All macros receive an extra argument `__source__::LineNumberNode` which describes the
+    parser location in the source file for the `@` of the macro call.
+    It can be accessed as a normal argument variable in the body of the macro.
+    This is implemented by inserting an extra leading argument into the
+    `Expr(:macrocall, :@name, LineNumberNode(...), args...)`
+    surface syntax. ([#21746])
+
+  * Passing the same keyword argument multiple times is now a syntax error ([#16937]).
+
+  * `getsockname` on a `TCPSocket` now returns the locally bound address and port
+    of the socket. Previously the address of the remote endpoint was being
+    returned ([#21825]).
+
+  * Using `ARGS` within the ~/.juliarc.jl or within a .jl file loaded with `--load` will no
+    longer contain the script name as the first argument. Instead the script name will be
+    assigned to `PROGRAM_FILE`. ([#22092])
+
+  * The format for a `ClusterManager` specifying the cookie on the command line is now
+    `--worker=<cookie>`. `--worker <cookie>` will not work as it is now an optional argument.
+
+  * The representation of `CartesianRange` has changed to a
+    tuple-of-AbstractUnitRanges; the `start` and `stop` fields are no
+    longer present. Use `first(R)` and `last(R)` to obtain
+    start/stop. ([#20974])
+
+  * The `Diagonal`, `Bidiagonal`, `Tridiagonal` and `SymTridiagonal` type definitions have
+    changed from `Diagonal{T}`, `Bidiagonal{T}`, `Tridiagonal{T}` and `SymTridiagonal{T}`
+    to `Diagonal{T,V<:AbstractVector{T}}`, `Bidiagonal{T,V<:AbstractVector{T}}`,
+    `Tridiagonal{T,V<:AbstractVector{T}}` and `SymTridiagonal{T,V<:AbstractVector{T}}`
+    respectively ([#22718], [#22925], [#23035], [#23154]).
+
+  * When called with an argument that contains `NaN` elements, `findmin` and `findmax` now return the
+    first `NaN` found and its corresponding index. Previously, `NaN` elements were ignored.
+    The new behavior matches that of `min`, `max`, `minimum`, and `maximum`.
+
+  * `isapprox(x,y)` now tests `norm(x-y) <= max(atol, rtol*max(norm(x), norm(y)))`
+    rather than `norm(x-y) <= atol + ...`, and `rtol` defaults to zero
+    if an `atol > 0` is specified ([#22742]).
+
+  * Spaces are no longer allowed between `@` and the name of a macro in a macro call ([#22868]).
+
+  * Juxtaposition of a non-literal with a macro call (`x@macro`) is no longer valid syntax ([#22868]).
+
+  * On a cluster, all files are now loaded from the local file system rather than node 1 ([#22588]).
+    To load the same file everywhere from node 1, one possible alternative is to broadcast a call to `include_string`:
+    `@everywhere include_string(Main, $(read("filename", String)), "filename")`.
+    Improving upon this API is left as an opportunity for packages.
+
+  * `randperm(n)` and `randcycle(n)` now always return a `Vector{Int}` (independent of
+    the type of `n`). Use the corresponding mutating functions `randperm!` and `randcycle!`
+    to control the array type ([#22723]).
+
+  * Hermitian now ignores any imaginary components in the diagonal instead of checking
+    the diagonal. ([#17367])
+
+  * Worker-worker connections are setup lazily for an `:all_to_all` topology. Use keyword
+    arg `lazy=false` to force all connections to be setup during a `addprocs` call. ([#22814])
+
+  * In `joinpath(a, b)` on Windows, if the drive specifications of `a` and `b` do not match,
+    `joinpath` now returns `b` instead of throwing an `ArgumentError`. `joinpath(path...)` is
+    defined to be left associative, so if any argument has a drive path which does not match
+    the drive of the join of the preceding paths, the prior ones are dropped. ([#20912])
+
+  * `^(A::AbstractMatrix{<:Integer}, p::Integer)` now throws a `DomainError`
+    if `p < 0`, unless `A == one(A)` or `A == -one(A)` (same as for
+    `^(A::Integer, p::Integer)`) ([#23366]).
+
+  * `^(A::AbstractMatrix{<:Integer}, p::Integer)` now promotes the element type in the same
+    way as `^(A::Integer, p::Integer)`. This means, for instance, that `[1 1; 0 1]^big(1)`
+    will return a `Matrix{BigInt}` instead of a `Matrix{Int}` ([#23366]).
+
+  * The element type of the input is now preserved in `unique`. Previously the element type
+    of the output was shrunk to fit the union of the type of each element in the input.
+    ([#22696])
+
+  * The `promote` function now raises an error if its arguments are of different types
+    and if attempting to convert them to a common type fails to change any of their types.
+    This avoids stack overflows in the common case of definitions like
+    `f(x, y) = f(promote(x, y)...)` ([#22801]).
+
+  * `findmin`, `findmax`, `indmin`, and `indmax` used to always return linear indices.
+    They now return `CartesianIndex`es for all but 1-d arrays, and in general return
+    the `keys` of indexed collections (e.g. dictionaries) ([#22907]).
+
+  * The `openspecfun` library is no longer built and shipped with Julia, as it is no longer
+    used internally ([#22390]).
+
+  * All loaded packges used to have bindings in `Main` (e.g. `Main.Package`). This is no
+    longer the case; now bindings will only exist for packages brought into scope by
+    typing `using Package` or `import Package` ([#17997]).
+
+  * `slicedim(b::BitVector, 1, x)` now consistently returns the same thing that `b[x]` would,
+    consistent with its documentation. Previously it would return a `BitArray{0}` for scalar
+    `x` ([#20233]).
+
+  * The rules for mixed-signedness integer arithmetic (e.g. `Int32(1) + UInt64(1)`) have been
+    simplified: if the arguments have different sizes (in bits), then the type of the larger
+    argument is used. If the arguments have the same size, the unsigned type is used ([#9292]).
+
+  * All command line arguments passed via `-e`, `-E`, and `-L` will be executed in the order
+    given on the command line ([#23665]).
+
+  * `I` now yields `UniformScaling{Bool}(true)` rather than `UniformScaling{Int64}(1)`
+    to better preserve types in operations involving `I` ([#24396]).
+
+  * The return type of `reinterpret` has changed to `ReinterpretArray`. `reinterpret` on sparse
+    arrays has been discontinued.
+
+  * `Base.find_in_path` is now `Base.find_package` or `Base.find_source_file` ([#24320]).
+
+  * `finalizer` now takes functions or pointers as its first argument, and the object being
+    finalized as its second (rather than the reverse). For the majority of use cases
+    deprecation warnings will be triggered. However, deprecation warnings will not trigger where
+    (1) the callable argument is not a subtype of `Function`; or (2) both arguments are
+    `Function`s or `Ptr{Cvoid}`s ([#24605]).
+
+  * The `kill` function now throws errors on user error (e.g. on permission
+    errors), but returns successfully if the process had previously exited.
+    Its return value has been removed. Use the `process_running` function
+    to determine if a process has already exited.
+
+  * Broadcasting has been redesigned with an extensible public interface. The new API is
+    documented at https://docs.julialang.org/en/latest/manual/interfaces/#Interfaces-1.
+    `AbstractArray` types that specialized broadcasting using the old internal API will
+    need to switch to the new API. ([#20740])
+
+  * The logging system has been redesigned - `info` and `warn` are deprecated
+    and replaced with the logging macros `@info`, `@warn`, `@debug` and
+    `@error`.  The `logging` function is also deprecated and replaced with
+    `AbstractLogger` and the functions from the new standard `Logging` library.
+    ([#24490])
+
+  * The `RevString` type has been removed from the language; `reverse(::String)` returns
+    a `String` with code points (or fragments thereof) in reverse order. In general,
+    `reverse(s)` should return a string of the same type and encoding as `s` with code
+    points in reverse order; any string type overrides `reverse` to return a different
+    type of string must also override `reverseind` to compute reversed indices correctly.
+
+  * `eachindex(A, B...)` now requires that all inputs have the same number of elements.
+    When the chosen indexing is Cartesian, they must have the same axes.
+
+  * `AbstractRange` objects are now considered as equal to other `AbstractArray` objects
+    by `==` and `isequal` if all of their elements are equal ([#16401]).
+    This has required changing the hashing algorithm: ranges now use an O(N) fallback
+    instead of a O(1) specialized method unless they define the `Base.TypeRangeStep`
+    trait; see its documentation for details. Types which support subtraction (operator
+    `-`) must now implement `widen` for hashing to work inside heterogeneous arrays.
+
+  * `findn(x::AbstractVector)` now returns a 1-tuple with the vector of indices, to be
+    consistent with higher order arrays ([#25365]).
+
+  * `find` now returns the same type of indices as `keys`/`pairs` for `AbstractArray`,
+    `AbstractDict`, `AbstractString`, `Tuple` and `NamedTuple` objects ([#24774]).
+    In particular, this means that it returns `CartesianIndex` objects for matrices
+    and higher-dimensional arrays instead of linear indices as was previously the case.
+    Use `LinearIndices(a)[find(f, a)]` to compute linear indices.
+
+ * `AbstractSet` objects are now considered equal by `==` and `isequal` if all of their
+    elements are equal ([#25368]). This has required changing the hashing algorithm
+    for `BitSet`.
+
+  * the default behavior of `titlecase` is changed in two ways ([#23393]):
+    + characters not starting a word are converted to lowercase;
+      a new keyword argument `strict` is added which
+      allows to get the old behavior when it's `false`.
+    + any non-letter character is considered as a word separator;
+      to get the old behavior (only "space" characters are considered as
+      word separators), use the keyword `wordsep=isspace`.
 
 Library improvements
 --------------------
 
-  * `isequal` now compares all numbers by value, ignoring type ([#6624]).
+  * The function `thisind(s::AbstractString, i::Integer)` returns the largest valid index
+    less or equal than `i` in the string `s` or `0` if no such index exists ([#24414]).
 
-  * Implement limited shared-memory parallelism with `SharedArray`s ([#5380]).
+  * `Irrational` is now a subtype of `AbstractIrrational` ([#24245]).
 
-  * Well-behaved floating-point ranges ([#2333], [#5636]).
-    Introduced the `FloatRange` type for floating-point ranges with a step,
-    which will give intuitive/correct results for classically problematic
-    ranges like `0.1:0.1:0.3`, `0.0:0.7:2.1` or `1.0:1/49:27.0`.
+  * Introduced the `empty` function, the functional pair to `empty!` which returns a new,
+    empty container ([#24390]).
 
-  * `mod2pi` function ([#4799], [#4862]).
+  * Jump to first/last history entries in the REPL via "Alt-<" and "Alt->" ([#22829]).
 
-  * New functions `minmax` and `extrema` ([#5275]).
+  * The function `chop` now accepts two arguments `head` and `tail` allowing to specify
+    number of characters to remove from the head and tail of the string ([#24126]).
 
-  * New macros `@edit`, `@less`, `@code_typed`, `@code_lowered`, `@code_llvm` and `@code_native` that all function like `@which` ([#5832]).
+  * `get(io, :color, false)` can now be used to query whether a stream `io` supports
+    [ANSI color codes](https://en.wikipedia.org/wiki/ANSI_escape_code) ([#25067]),
+    rather than using the undocumented `Base.have_color` global flag.
 
-  * `consume(p)` extended to `consume(p, args...)`, allowing it
-    to optionally pass `args...` back to the producer ([#4775]).
+  * Functions `first` and `last` now accept `nchar` argument for `AbstractString`.
+    If this argument is used they return a string consisting of first/last `nchar`
+    characters from the original string ([#23960]).
 
-  * `.juliarc.jl` is now loaded for both script and REPL execution ([#5076]).
+  * Expressions `x^-n` where `n` is an *integer literal* now correspond to `inv(x)^n`.
+    For example, `x^-1` is now essentially a synonym for `inv(x)`, and works
+    in a type-stable way even if `typeof(x) != typeof(inv(x))` ([#24240]).
 
-  * The `Sys` module now includes convenient functions for working with
-    dynamic library handles; `Sys.dllist` will list out all paths currently
-    loaded via `dlopen`, and `Sys.dlpath` will lookup a path from a handle
+  * New `Iterators.reverse(itr)` for reverse-order iteration ([#24187]).  Iterator
+    types `T` can implement `start` etc. for `Iterators.Reverse{T}` to support this.
 
-  * `readdlm` treats multiple whitespace characters as a single delimiter
-    by default (when no delimiter is specified). This is useful for reading
-    fixed-width or messy whitespace-delimited data ([#5403]).
+  * The functions `nextind` and `prevind` now accept `nchar` argument that indicates
+    the number of characters to move ([#23805]).
 
-  * The Airy, Bessel, Hankel, and related functions (`airy*`,
-    `bessel*`, `hankel*`) now detect errors returned by the underlying
-    AMOS library, throwing an `AmosException` in that case ([#4967]).
+  * The functions `strip`, `lstrip` and `rstrip` now return `SubString` ([#22496]).
 
-  * `methodswith` now returns an array of `Method`s ([#5464]) rather
-    than just printing its results.
+  * The functions `strwidth` and `charwidth` have been merged into `textwidth`([#20816]).
 
-  * `errno([code])` function to get or set the C library's `errno`.
+  * The functions `base` and `digits` digits now accept a negative
+    base (like `ndigits` did) ([#21692]).
 
-  * `GitHub` module for interacting with the GitHub API.
+  * The function `randn` now accepts complex arguments (`Complex{T <: AbstractFloat}`)
+    ([#21973]).
 
-  * Package improvements
+  * `parse(Complex{T}, string)` can parse complex numbers in common formats ([#24713]).
 
-    * Packages are now installed into `.julia/v0.3` by default (or
-      whatever the current Julia version is), so that different
-      versions of Julia can co-exist with incompatible packages.
-      Existing `.julia` installations are unaffected unless `Pkg.init()`
-      is run to re-create the package directories ([#3344], [#5737]).
+  * The function `rand` can now pick up random elements from strings, associatives
+    and sets ([#22228], [#21960], [#18155], [#22224]).
 
-    * `Pkg.submit(pkg[,commit])` function to automatically submit
-      a GitHub pull request to the package author.
+  * Method lists are now printed as a numbered list. In addition, the source code of a
+    method can be opened in an editor by entering the corresponding number in the REPL
+    and pressing `^Q` ([#22007]).
 
-  * Collections improvements
+  * `getpeername` on a `TCPSocket` returns the address and port of the remote
+    endpoint of the TCP connection ([#21825]).
 
-    * `Array` assignment (e.g. `x[:] = y`) ignores singleton dimensions
-      and allows the last dimension of one side to match all trailing dimensions
-      of the other ([#4048], [#4383]).
+  * `resize!` and `sizehint!` methods no longer over-reserve memory when the
+    requested array size is more than double of its current size ([#22038]).
 
-    * `Dict(kv)` constructor for any iterator on `(key,value)` pairs.
+  * The `crc32c` function for CRC-32c checksums is now exported ([#22274]).
 
-    * Multi-key `Dict`s: `D[x,y...]` is now a synonym for `D[(x,y...)]`
-      for associations `D` ([#4870]).
+  * `eye(::Type{Diagonal{T}}, m::Integer)` has been deprecated in favor of
+    `Diagonal{T}(I, m)` ([#24413]).
 
-    * `push!` and `unshift!` can push multiple arguments ([#4782]).
+  * The output of `versioninfo` is now controlled with keyword arguments ([#21974]).
 
-    * `writedlm` and `writecsv` now accept any iterable collection of
-      iterable rows, in addition to `AbstractArray` arguments, and the
-      ``writedlm`` delimiter can be any printable object (e.g. a
-      ``String``) instead of just a ``Char``.
+  * The function `LibGit2.set_remote_url` now always sets both the fetch and push URLs for a
+    git repo. Additionally, the argument order was changed to be consistent with the git
+    command line tool ([#22062]).
 
-    * `isempty` now works for any iterable collection ([#5827]).
+  * `logspace` now accepts a `base` keyword argument to specify the base of the logarithmic
+    range. The base defaults to 10 ([#22310]).
 
-    * `unique` now accepts an optional `dim` argument for finding
-      unique rows or columns of a matrix or regions of a
-      multidimensional array ([#5811]).
+  * Added `unique!` which is an inplace version of `unique` ([#20549]).
 
-  * `Number` improvements
+  * `@test isequal(x, y)` and `@test isapprox(x, y)` now prints an evaluated expression when
+    the test fails ([#22296]).
 
-    * The `ImaginaryUnit` type no longer exists. Instead, `im` is of type
-      `Complex{Bool}`. Making this work required changing the semantics of
-      boolean multiplication to approximately, `true * x = x` and
-      `false * x = zero(x)`, which can itself be considered useful ([#5468]).
+  * Uses of `Val{c}` in `Base` has been replaced with `Val{c}()`, which is now easily
+    accessible via the `@pure` constructor `Val(c)`. Functions are defined as
+    `f(::Val{c}) = ...` and called by `f(Val(c))`. Notable affected functions include:
+    `ntuple`, `Base.literal_pow`, `sqrtm`, `lufact`, `lufact!`, `qrfact`, `qrfact!`,
+    `cholfact`, `cholfact!`, `_broadcast!`, `reshape`, `cat` and `cat_t`.
 
-    * `big` is now vectorized ([#4766])
+  * A new `@macroexpand1` macro for non recursive macro expansion ([#21662]).
 
-    * `nextpow` and `prevpow` now return the `a^n` values instead of the
-      exponent `n` ([#4819])
+  * `Char`s can now be concatenated with `String`s and/or other `Char`s using `*` ([#22532]).
 
-    * Overflow detection in `parseint` ([#4874]).
+  * `Diagonal`, `Bidiagonal`, `Tridiagonal` and `SymTridiagonal` are now parameterized on
+    the type of the wrapped vectors, allowing `Diagonal`, `Bidiagonal`, `Tridiagonal` and
+    `SymTridiagonal` matrices with arbitrary `AbstractVector`s
+    ([#22718], [#22925], [#23035], [#23154]).
 
-    * `rand` now supports arbitrary `Ranges` arguments ([#5059]).
+  * Mutating versions of `randperm` and `randcycle` have been added:
+    `randperm!` and `randcycle!` ([#22723]).
 
-    * `expm1` and `log1p` now support complex arguments ([#3141]).
+  * `BigFloat` random numbers can now be generated ([#22720]).
 
-    * Broadcasting `.//` is now included ([#7094]).
+  * REPL Undo via Ctrl-/ and Ctrl-_
 
-    * `prevfloat` and `nextfloat` now saturate at -Inf and Inf,
-      respectively, and have otherwise been fixed to follow the IEEE-754
-      standard functions `nextDown` and `nextUp` ([#5025]).
+  * `diagm` now accepts several diagonal index/vector `Pair`s ([#24047]).
 
-    * New function `widen` for widening numeric types and values, and `widemul`
-      for multiplying to a larger type ([#6169]).
-
-    * `polygamma`, `digamma`, and `trigamma` now accept complex
-      arguments, and `zeta(s, z)` now provides the Hurwitz zeta ([#7125]).
-
-    * Narrow integer types (< 32 bits) are promoted to `Float64` rather
-      than to `Float32` by `float(x)` ([#7390]).
-
-  * `String` improvements
-
-    * Triple-quoted regex strings, `r"""..."""` ([#4934]).
-
-    * New string type, `UTF16String` ([#4930]), constructed by
-      `utf16(s)` from another string, a `Uint16` array or pointer, or
-      a byte array (possibly prefixed by a byte-order marker to
-      indicate endian-ness).  Its data is internally `NULL`-terminated
-      for passing to C ([#7016]).
-
-    * `CharString` is renamed to `UTF32String` ([#4943]), and its data
-      is now internally `NULL`-terminated for passing to C ([#7016]).
-      `CharString(c::Char...)` is deprecated in favor of `utf32(c...)`,
-      and `utf32(s)` otherwise has functionality similar to `utf16(s)`.
-
-    * New `WString` and `wstring` synonyms for either `UTF16String`
-      and `utf16` or `UTF32String` and `utf32`, respectively, depending
-      on the width of `Cwchar_t` ([#7016]).
-
-    * `normalize_string` function to perform Unicode normalization,
-      case-folding, and other transformations ([#5576]).
-
-    * `pointer(s, i=1)` for `ByteString`, `UTF16String`, `UTF32String`,
-      and `SubString`s thereof ([#5703]).
-
-    * `bytestring` is automatically called on `String` arguments for
-      conversion to `Ptr{Uint8}` in `ccall` ([#5677]).
-
-  * Linear algebra improvements
-
-      * Balancing options for eigenvector calculations for general matrices ([#5428]).
-
-      * Mutating linear algebra functions no longer promote ([#5526]).
-
-      * `condskeel` for Skeel condition numbers ([#5726]).
-
-      * `norm(::Matrix)` no longer calculates a vector norm when the first
-        dimension is one ([#5545]); it always uses the operator (induced)
-        matrix norm.
-
-      * New `vecnorm(itr, p=2)` function that computes the norm of
-        any iterable collection of numbers as if it were a vector of
-        the same length.  This generalizes and replaces `normfro` ([#6057]),
-        and `norm` is now type-stable ([#6056]).
-
-      * New `UniformScaling` matrix type and identity `I` constant ([#5810]).
-
-      * None of the concrete matrix factorization types are exported from `Base`
-        by default anymore.
-
-    * Sparse linear algebra
-
-      * 1-d sparse `getindex` has been implemented ([#7047])
-
-      * Faster sparse `getindex` ([#7131]).
-
-      * Faster sparse `kron` ([#4958]).
-
-      * `sparse(A) \ B` now supports a matrix `B` of right-hand sides ([#5196]).
-
-      * `eigs(A, sigma)` now uses shift-and-invert for nonzero shifts `sigma` and inverse iteration for `which="SM"`. If `sigma==nothing` (the new default), computes ordinary (forward) iterations. ([#5776])
-
-      * `sprand` is faster, and whether any entry is nonzero is now determined independently with the specified probability ([#6726]).
-
-    * Dense linear algebra for special matrix types
-
-      * Interconversions between the special matrix types `Diagonal`, `Bidiagonal`,
-        `SymTridiagonal`, `Triangular`, and `Triangular`, and `Matrix` are now allowed
-        for matrices which are representable in both source and destination types. ([5e3f074b])
-
-      * Allow for addition and subtraction over mixed matrix types, automatically promoting
-        the result to the denser matrix type ([a448e080], [#5927])
-
-      * new algorithms for linear solvers and eigensystems of `Bidiagonal`
-        matrices of generic element types ([#5277])
-
-      * new algorithms for linear solvers, eigensystems and singular systems of `Diagonal`
-        matrices of generic element types ([#5263])
-
-      * new algorithms for linear solvers and eigensystems of `Triangular`
-        matrices of generic element types ([#5255])
-
-      * specialized `inv` and `det` methods for `Tridiagonal` and `SymTridiagonal`
-        based on recurrence relations between principal minors ([#5358])
-
-      * specialized `transpose`, `ctranspose`, `istril`, `istriu` methods for
-        `Triangular` ([#5255]) and `Bidiagonal` ([#5277])
-
-      * new LAPACK wrappers
-        - condition number estimate `cond(A::Triangular)` ([#5255])
-
-      * parametrize `Triangular` on matrix type ([#7064])
-
-      * Lyapunov / Sylvester solver ([#7435])
-
-      * `eigvals` for `Symmetric`, `Tridiagonal` and `Hermitian` matrices now
-        support additional method signatures: ([#3688], [#6652], [#6678], [#7647])
-        - `eigvals(M, el, eu)` finds all eigenvalues in the interval `(el, eu]`
-        - `eigvals(M, il:iu)` finds the `il`th through the `iu`th eigenvalues (in ascending order)
-
-    * Dense linear algebra for generic matrix element types
-
-      * LU factorization ([#5381] and [#5430])
-
-      * QR factorization ([#5526])
-
-  * New function `deleteat!` deletes a specified index or indices and
-    returns the updated collection
-
-  * The `setenv` function for external processes now accepts a `dir` keyword
-    argument for specifying the directory to start the child process in ([#4888]).
-
-  * Constructors for collections (`Set`, `Dict`, etc.) now generally accept a
-    single iterable argument giving the elements of the collection ([#4996], [#4871])
-
-  * Ranges and arrays with the same elements are now unequal. This allows hashing
-    and comparing ranges to be faster. ([#5778])
-
-  * Broadcasting now works on arbitrary `AbstractArrays` ([#5387])
-
-  * Reduction functions that accept a pre-allocated output array, including
-    `sum!`, `prod!`, `maximum!`, `minimum!`, `all!`, `any!` ([#6197], [#5387])
-
-  * Faster performance on `fill!` and `copy!` for array types not supporting
-    efficient linear indexing ([#5671], [#5387])
-
-  * Changes to range types ([#5585])
-
-    * `Range` is now the abstract range type, instead of `Ranges`
-
-    * New function `range` for constructing ranges by length
-
-    * `Range` is now `StepRange`, and `Range1` is now `UnitRange`. Their
-      constructors accept end points instead of lengths. Both are subtypes of a
-      new abstract type `OrdinalRange`.
-
-    * Ranges now support `BigInt` and general ordinal types.
-
-    * Very large ranges (e.g. `0:typemax(Int)`) can now be constructed, but some
-      operations (e.g. `length`) will raise an `OverflowError`.
-
-  * Extended API for `cov` and `cor`, which accept keyword arguments `vardim`,
-    `corrected`, and `mean` ([#6273])
-
-  * New functions `randsubseq` and `randsubseq!` to create a random subsequence of an array ([#6726])
-
-  * New macro `@evalpoly` for efficient inline evaluation of polynomials ([#7146]).
-
-  * The signal filtering function `filt` now accepts an optional initial filter state vector. A new in-place function `filt!` is also exported. ([#7513])
-
-  * Significantly faster `cumsum` and `cumprod`. ([#7359])
-
-  * Implement `findmin` and `findmax` over specified array dimensions. ([#6716])
-
-  * Support memory-mapping of files with offsets on Windows. ([#7242])
-
-  * Catch writes to protect memory, such as when trying to modify a mmapped file opened in read-only mode. ([#3434])
-
-Environment improvements
-------------------------
-
-  * New `--code-coverage` and `--track-allocation` startup features allow one to measure the number of executions or the amount of memory allocated, respectively, at each line of code. ([#5423],[#7464])
-
-  * `Profile.init` now accepts keyword arguments, and returns the current settings when no arguments are supplied. ([#7365])
-
-Build improvements
-------------------
-
-  * Dependencies are now verified against stored MD5/SHA512 hashes, to ensure
-    that the correct file has been downloaded and was not modified. ([#6773])
-
+  * New function `equalto(x)`, which returns a function that compares its argument to `x`
+    using `isequal` ([#23812]).
+
+  * `reinterpret` now works on any AbstractArray using the new `ReinterpretArray` type.
+    This supersedes the old behavior of reinterpret on Arrays. As a result, reinterpreting
+    arrays with different alignment requirements (removed in 0.6) is once again allowed ([#23750]).
+
+  * The `keys` of an `Associative` are now an `AbstractSet`. `Base.KeyIterator{<:Associative}`
+    has been changed to `KeySet{K, <:Associative{K}} <: AbstractSet{K}` ([#24580]).
+
+  * New function `ncodeunits(s::AbstractString)` gives the number of code units in a string.
+    The generic definition is constant time but calls `endof(s)` which may be inefficient.
+    Therefore custom string types may want to define direct `ncodeunits` methods.
+
+  * `reverseind(s::AbstractString, i::Integer)` now has an efficient generic fallback, so
+    custom string types do not need to provide their own efficient defintions. The generic
+    definition relies on `ncodeunits` however, so for optimal performance you may need to
+    define a custom method for that function.
+
+  * The global RNG is being re-seeded with its own seed at the beginning of each `@testset`,
+    and have its original state restored at the end ([#24445]). This is breaking for testsets
+    relying implicitly on the global RNG being in a specific state.
+
+  * `permutedims(m::AbstractMatrix)` is now short for `permutedims(m, (2,1))`, and is now a
+    more convenient way of making a "shallow transpose" of a 2D array. This is the
+    recommended approach for manipulating arrays of data, rather than the recursively
+    defined, linear-algebra function `transpose`. Similarly,
+    `permutedims(v::AbstractVector)` will create a row matrix ([#24839]).
+
+  * A new `replace(A, old=>new)` function is introduced to replace `old` by `new` in
+    collection `A`. There are also two other methods with a different API, and
+    a mutating variant, `replace!` ([#22324]).
+
+  * `CartesianRange` changes ([#24715]):
+    - Inherits from `AbstractArray`, and linear indexing can be used to provide
+      linear-to-cartesian conversion ([#24715])
+    - It has a new constructor taking an array
+
+  * several missing set-like operations have been added ([#23528]):
+    `union`, `intersect`, `symdiff`, `setdiff` are now implemented for
+    all collections with arbitrary many arguments, as well as the
+    mutating counterparts (`union!` etc.). The performance is also
+    much better in many cases. Note that this change is slightly
+    breaking: all the non-mutating functions always return a new
+    object even if only one argument is passed. Moreover the semantics
+    of `intersect` and `symdiff` is changed for vectors:
+    + `intersect` doesn't preserve the multiplicity anymore (use `filter` for
+      the old behavior)
+    + `symdiff` has been made consistent with the corresponding methods for
+      other containers, by taking the multiplicity of the arguments into account.
+      Use `unique` to get the old behavior.
+
+  * The type `LinearIndices` has been added, providing conversion from
+    cartesian incices to linear indices using the normal indexing operation. ([#24715])
+
+Compiler/Runtime improvements
+-----------------------------
+
+  * The inlining heuristic now models the approximate runtime cost of
+    a method (using some strongly-simplifying assumptions). Functions
+    are inlined unless their estimated runtime cost substantially
+    exceeds the cost of setting up and issuing a subroutine
+    call. ([#22210], [#22732])
+
+  * Inference recursion-detection heuristics are now more precise,
+    allowing them to be triggered less often, but being more agressive when they
+    are triggered to drive the inference computation to a solution ([#23912]).
+
+  * Inference now propagates constants inter-procedurally, and can compute
+    various constants expressions at compile-time ([#24362]).
 
 Deprecated or removed
 ---------------------
 
-  * `convert(Ptr{T1}, x::Array{T2})` is now deprecated unless `T1 == T2`
-    or `T1 == None` ([#6073]).  (You can still explicitly `convert`
-    one pointer type into another if needed.)
+  * The `JULIA_HOME` environment variable has been renamed to `JULIA_BINDIR` and
+    `Base.JULIA_HOME` has been moved to `Sys.BINDIR` ([#20899]).
 
-  * `Sys.shlib_ext` has been renamed to `Sys.dlext`
+  * The keyword `immutable` is fully deprecated to `struct`, and
+    `type` is fully deprecated to `mutable struct` ([#19157], [#20418]).
 
-  * `dense` is deprecated in favor of `full` ([#4759])
+  * Indexing into multidimensional arrays with more than one index but fewer indices than there are
+    dimensions is no longer permitted when those trailing dimensions have lengths greater than 1.
+    Instead, reshape the array or add trailing indices so the dimensionality and number of indices
+    match ([#14770], [#23628]).
 
-  * The `Stat` type is renamed `StatStruct` ([#4670])
+  * `indices(a)` and `indices(a,d)` have been deprecated in favor of `axes(a)` and
+    `axes(a, d)` ([#25057]).
 
-  * `set_rounding`, `get_rounding` and `with_rounding` now take an additional
-    argument specifying the floating point type to which they apply. The old
-    behaviour and `[get/set/with]_bigfloat_rounding` functions are deprecated ([#5007])
+  * `EnvHash` has been renamed to `EnvDict` ([#24167]).
 
-  * `cholpfact` and `qrpfact` are deprecated in favor of keyword arguments in
-    `cholfact(..., pivot=true)` and `qrfact(..., pivot=true)` ([#5330])
+  * Uninitialized `Array` constructors of the form
+    `Array[{T,N}](shape...)` have been deprecated in favor of equivalents
+    accepting `uninitialized` (an alias for `Uninitialized()`) as their first argument,
+    as in `Array[{T,N}](uninitialized, shape...)`. For example,
+    `Vector(3)` is now `Vector(uninitialized, 3)`, `Matrix{Int}((2, 4))` is now,
+    `Matrix{Int}(uninitialized, (2, 4))`, and `Array{Float32,3}(11, 13, 17)` is now
+    `Array{Float32,3}(uninitialized, 11, 13, 17)` ([#24781]).
 
-  * `symmetrize!` is deprecated in favor of `Base.LinAlg.copytri!` ([#5427])
+  * `LinAlg.fillslots!` has been renamed `LinAlg.fillstored!` ([#25030]).
 
-  * `myindexes` has been renamed to `localindexes` ([#5475])
+  * `fill!(A::Diagonal, x)` and `fill!(A::AbstractTriangular, x)` have been deprecated
+    in favor of `Base.LinAlg.fillstored!(A, x)` ([#24413]).
 
-  * `factorize!` is deprecated in favor of `factorize`. ([#5526])
+  * `eye` has been deprecated in favor of `I` and `Matrix` constructors. Please see the
+    deprecation warnings for replacement details ([#24438]).
 
-  * `nnz` counts the number of structural nonzeros in a sparse
-    matrix. Use `countnz` for the actual number of nonzeros. ([#6769])
+  * `zeros(D::Diagonal[, opts...])` has been deprecated ([#24654]).
 
-  * `setfield` is renamed `setfield!` ([#5748])
+  * Using Bool values directly as indices is now deprecated and will be an error in the future. Convert
+    them to `Int` before indexing if you intend to access index `1` for `true` and `0` for `false`.
 
-  * `put` and `take` are renamed `put!` and `take!` ([#5511])
+  * `whos` has been renamed `varinfo`, and now returns a markdown table instead of printing
+    output ([#12131]).
 
-  * `put!` now returns its first argument, the remote reference ([#5819])
+  * Uninitialized `RowVector` constructors of the form `RowVector{T}(shape...)` have been
+    deprecated in favor of equivalents accepting `uninitialized` (an alias for
+    `Uninitialized()`) as their first argument, as in
+    `RowVector{T}(uninitialized, shape...)`. For example, `RowVector{Int}(3)` is now
+    `RowVector{Int}(uninitialized, 3)`, and `RowVector{Float32}((1, 4))` is now
+    `RowVector{Float32}(uninitialized, (1, 4))` ([#24786]).
 
-  * `read` methods that modify a passed array are now called `read!` ([#5970])
+  * `writecsv(io, a; opts...)` has been deprecated in favor of
+    `writedlm(io, a, ','; opts...)` ([#23529]).
 
-  * `infs` and `nans` are deprecated in favor of the more general `fill`.
+  * The method `srand(rng, filename, n=4)` has been deprecated ([#21359]).
 
-  * `*` and `div` are no longer supported for `Char`.
+  * `readcsv(io[, T::Type]; opts...)` has been deprecated in favor of
+    `readdlm(io, ','[, T]; opts...)` ([#23530]).
 
-  * `Range` is renamed `StepRange` and `Range1` is renamed `UnitRange`.
-    `Ranges` is renamed `Range`.
+  * `sparse(s::UniformScaling, m::Integer)` has been deprecated in favor of the
+    three-argument equivalent `sparse(s::UniformScaling, m, n)` ([#24472]).
 
-  * `bitmix` is replaced by a 2-argument form of `hash`.
+  * The `cholfact`/`cholfact!` methods that accepted an `uplo` symbol have been deprecated
+    in favor of using `Hermitian` (or `Symmetric`) views ([#22187], [#22188]).
 
-  * `readsfrom` and `writesto` are replaced by `open` ([#6948]).
+  * The `thin` keyword argument for orthogonal decomposition methods has
+    been deprecated in favor of `full`, which has the opposite meaning:
+    `thin == true` if and only if `full == false` ([#24279]).
 
-  * `insert!` now throws a `BoundsError` if
-    `index > length(collection)+1` ([#7373]).
+  * `isposdef(A::AbstractMatrix, UL::Symbol)` and `isposdef!(A::AbstractMatrix, UL::Symbol)`
+    have been deprecated in favor of `isposdef(Hermitian(A, UL))` and `isposdef!(Hermitian(A, UL))`
+    respectively ([#22245]).
 
-Julia v0.2.0 Release Notes
-==========================
+  * The `bkfact`/`bkfact!` methods that accepted `uplo` and `issymmetric` symbols have been deprecated
+    in favor of using `Hermitian` (or `Symmetric`) views ([#22605]).
 
-The 0.2 release brings improvements to many areas of Julia. Among the
-most visible changes are support for 64-bit Windows, keyword arguments
-to functions, immutable types, a redesigned and polished package
-manager, a multimedia interface supporting usage of Julia in IPython,
-a built-in profiler, and major improvements to Julia's linear algebra,
-I/O, and parallel capabilities. These are accompanied by many other
-changes adding new features, enhancing the library's consistency,
-improving performance, increasing test coverage, easing installation,
-and expanding the documentation. While not part of Julia proper, the
-package ecosystem has also grown and matured considerably since the
-0.1 release. See below for more information about the long list of
-changes that improve Julia's usability and performance.
+  * The function `current_module` is deprecated and replaced with `@__MODULE__`.
+    This caused the deprecation of some reflection methods (such as `macroexpand` and
+    `isconst`), which now require a module argument. And it caused the bugfix of other
+    default arguments to use the Main module (including `whos`, `which`)  ([#22064]).
 
-New language features
----------------------
+  * `expand(ex)` and `expand(module, ex)` have been deprecated in favor of
+    `Meta.lower(module, ex)` ([#22064], [#24278]).
 
-  * Keyword & optional function arguments ([#485], [#1817]).
+  * `ones(A::AbstractArray[, opts...])` and `zeros(A::AbstractArray[, opts...])` methods
+    have been deprecated. For `zeros(A)`, consider `zero(A)`. For `ones(A)` or `zeros(A)`,
+    consider `ones(size(A))`, `zeros(size(A))`, `fill(v, size(A))` for `v` an appropriate
+    one or zero, `fill!(copy(A), {1|0})`, `fill!(similar(A), {1|0})`, or any of the preceding
+    with different element type and/or shape depending on `opts...`. Where strictly
+    necessary, consider `fill!(similar(A[, opts...]), {one(eltype(A)) | zero(eltype(A))})`.
+    For an algebraic multiplicative identity, consider `one(A)` ([#24656]).
 
-  * Immutable types ([#13]).
+  * The `Operators` module is deprecated. Instead, import required operators explicitly
+    from `Base`, e.g. `import Base: +, -, *, /` ([#22251]).
 
-  * Triple-quoted string literals ([#70]).
+  * Bindings to the FFTW library have been removed from Base. The DFT framework for building FFT
+    implementations is now in AbstractFFTs.jl, the bindings to the FFTW library are in FFTW.jl,
+    and the Base signal processing functions which used FFTs are now in DSP.jl ([#21956]).
 
-  * New infix operator `in` (e.g. `x in S`), and corresponding function
-    `in(x,S)`, replacing `contains(S,x)` function ([#2703]).
+  * The `corrected` positional argument to `cov` has been deprecated in favor of
+    a keyword argument with the same name ([#21709]).
 
-  * New variable bindings on each for loop and comprehension iteration ([#1571]).
-    For example, before this change:
+  * Omitting spaces around the `?` and the `:` tokens in a ternary expression has been deprecated.
+    Ternaries must now include some amount of whitespace, e.g. `x ? a : b` rather than
+    `x?a:b` ([#22523] and [#22712]).
 
-        julia> map(f->f(), { ()->i for i=1:3 })
-        3-element Any Array:
-         3
-         3
-         3
+  * `?` can no longer be used as an identifier name ([#22712])
 
-    and after:
+  * The method `replace(s::AbstractString, pat, r, [count])` is deprecated
+    in favor of `replace(s::AbstractString, pat => r; [count])` ([#25165]).
+    Moreover, `count` cannot be negative anymore (use `typemax(Int)` instead ([#22325]).
 
-        julia> map(f->f(), { ()->i for i=1:3 })
-        3-element Any Array:
-         1
-         2
-         3
+  * `read(io, type, dims)` is deprecated to `read!(io, Array{type}(dims))` ([#21450]).
 
-  * Explicit relative importing ([#2375]).
+  * `read(::IO, ::Ref)` is now a method of `read!`, since it mutates its `Ref` argument ([#21592]).
 
-  * Methods can be added to functions in other modules using dot syntax,
-    as in `Foo.bar(x) = 0`.
+  * `Bidiagonal` constructors now use a `Symbol` (`:U` or `:L`) for the upper/lower
+    argument, instead of a `Bool` or a `Char` ([#22703]).
 
-  * `import module: name1, name2, ...` ([#5214]).
+  * `Bidiagonal`, `Tridiagonal` and `SymTridiagonal` constructors that automatically
+    converted the input vectors to the same type are deprecated in favor of explicit
+    conversion ([#22925], [#23035], [#23154].
 
-  * A semicolon is now allowed after an `import` or `using` statement ([#4130]).
+  * Calling `nfields` on a type to find out how many fields its instances have is deprecated.
+    Use `fieldcount` instead. Use `nfields` only to get the number of fields in a specific object ([#22350]).
 
-  * In an interactive session (REPL), you can use `;cmd` to run `cmd` via an interactive
-    shell. For example:
+  * `fieldnames` now operates only on types. To get the names of fields in an object, use
+    `fieldnames(typeof(x))` ([#22350]).
 
-        julia> ;ls
-        CONTRIBUTING.md  Makefile           VERSION      deps/      julia@  ui/
-        DISTRIBUTING.md  NEWS.md            Windows.inc  doc/       src/    usr/
-        LICENSE.md       README.md          base/        etc/       test/
-        Make.inc         README.windows.md  contrib/     examples/  tmp/
+  * `InexactError`, `DomainError`, and `OverflowError` now take
+    arguments. `InexactError(func::Symbol, type, -3)` now prints as
+    "ERROR: InexactError: func(type, -3)", `DomainError(val,
+    [msg])` prints as "ERROR: DomainError with val:\nmsg",
+    and `OverflowError(msg)` prints as "ERROR: OverflowError: msg".
+    ([#20005], [#22751], [#22761])
 
-New library functions
----------------------
+  * The operating system identification functions: `is_linux`, `is_bsd`, `is_apple`, `is_unix`,
+    and `is_windows`, have been deprecated in favor of `Sys.islinux`, `Sys.isbsd`, `Sys.isapple`,
+    `Sys.isunix`, and `Sys.iswindows`, respectively ([#22182]).
 
-  * Sampling profiler ([#2597]).
+  * The forms of `read`, `readstring`, and `eachline` that accepted both a `Cmd` object and an
+    input stream are deprecated. Use e.g. `read(pipeline(stdin, cmd))` instead ([#22762]).
 
-  * Functions for examining stages of the compiler's output:
-    `code_lowered`, `code_typed`, `code_llvm`, and `code_native`.
+  * The unexported type `AbstractIOBuffer` has been renamed to `GenericIOBuffer` ([#17360] [#22796]).
 
-  * Multimedia I/O API (display, writemime, etcetera) ([#3932]).
+  * `Display` has been renamed to `AbstractDisplay` ([#24831]).
 
-  * MPFR-based `BigFloat` ([#2814]), and many new `BigFloat` operations.
+  * Remaining vectorized methods over `SparseVector`s, particularly `floor`, `ceil`,
+    `trunc`, `round`, and most common transcendental functions such as `exp`, `log`, and
+    `sin` variants, have been deprecated in favor of dot-syntax ([#22961]).
 
-  * New half-precision IEEE floating-point type, `Float16` ([#3467]).
+  * The method `String(io::IOBuffer)` is deprecated to `String(take!(copy(io)))` ([#21438]).
 
-  * Support for setting floating-point rounding modes ([#3149]).
+  * The function `readstring` is deprecated in favor of `read(io, String)` ([#22793])
 
-  * `methodswith` shows all methods with an argument of specific type.
+  * The function `showall` is deprecated. Showing entire values is the default, unless an
+    `IOContext` specifying `:limit=>true` is in use ([#22847]).
 
-  * `mapslices` provides a general way to perform operations on slices of arrays ([#2204]).
+  * `issubtype` has been deprecated in favor of `<:` (which used to be an alias for `issubtype`).
 
-  * `repeat` function for constructing Arrays with repeated elements ([#3605]).
+  * Calling `write` on non-isbits arrays is deprecated in favor of explicit loops or
+    `serialize` ([#6466]).
 
-  * `Collections.PriorityQueue` type and `Collections.heap` functions ([#2920]).
+  * The default `juliarc.jl` file on Windows has been removed. Now must explicitly include the
+    full path if you need access to executables or libraries in the `Sys.BINDIR` directory, e.g.
+    `joinpath(Sys.BINDIR, "7z.exe")` for `7z.exe` ([#21540]).
 
-  * `quadgk` 1d-integration routine ([#3140]).
+  * `sqrtm` has been deprecated in favor of `sqrt` ([#23504]).
 
-  * `erfinv` and `erfcinv` functions ([#2987]).
+  * `expm` has been deprecated in favor of `exp` ([#23233]).
 
-  * `varm`, `stdm` ([#2265]).
+  * `logm` has been deprecated in favor of `log` ([#23505]).
 
-  * `digamma`, `invdigamma`, `trigamma` and `polygamma` for calculating derivatives of `gamma` function ([#3233]).
+  * `full` has been deprecated in favor of more specific, better defined alternatives.
+    On structured matrices `A`, consider instead `Matrix(A)`, `Array(A)`,
+    `SparseMatrixCSC(A)`, or `sparse(A)`. On sparse arrays `S`, consider instead
+    `Vector(S)`, `Matrix(S)`, or `Array(S)` as appropriate. On factorizations `F`,
+    consider instead `Matrix(F)`, `Array(F)`, `AbstractMatrix(F)`, or `AbstractArray(F)`.
+    On implicit orthogonal factors `Q`, consider instead `Matrix(Q)` or `Array(Q)`; for
+    implicit orthogonal factors that can be recovered in square or truncated form,
+    see the deprecation message for square recovery instructions. On `Symmetric`,
+    `Hermitian`, or `AbstractTriangular` matrices `A`, consider instead `Matrix(S)`,
+    `Array(S)`, `SparseMatrixCSC(S)`, or `sparse(S)`. On `Symmetric` matrices `A`
+    particularly, consider instead `LinAlg.copytri!(copy(parent(A)), A.uplo)`. On
+    `Hermitian` matrices `A` particularly, consider instead
+    `LinAlg.copytri!(copy(parent(A)), A.uplo, true)`. On `UpperTriangular` matrices `A`
+    particularly, consider instead `triu!(copy(parent(A)))`. On `LowerTriangular` matrices
+    `A` particularly, consider instead `tril!(copy(parent(A)))` ([#24250]).
 
-  * `logdet` ([#3070]).
+  * `speye` has been deprecated in favor of `I`, `sparse`, and `SparseMatrixCSC`
+    constructor methods ([#24356]).
 
-  * Names for C-compatible types: `Cchar`, `Clong`, etc. ([#2370]).
+  * Calling `union` with no arguments is deprecated; construct an empty set with an appropriate
+    element type using `Set{T}()` instead ([#23144]).
 
-  * `cglobal` to access global variables ([#1815]).
+  * Vectorized `DateTime`, `Date`, and `format` methods have been deprecated in favor of
+    dot-syntax ([#23207]).
 
-  * `unsafe_pointer_to_objref` ([#2468]) and `pointer_from_objref` ([#2515]).
+  * `Base.cpad` has been removed; use an appropriate combination of `rpad` and `lpad`
+    instead ([#23187]).
 
-  * `readandwrite` for external processes.
+  * `ctranspose` and `ctranspose!` have been deprecated in favor of `adjoint` and `adjoint!`,
+    respectively ([#23235]).
 
-  * I/O functions `readbytes` and `readbytes!` ([#3878]).
+  * `filter` and `filter!` on dictionaries now pass a single `key=>value` pair to the
+    argument function, instead of two arguments ([#17886]).
 
-  * `flush_cstdio` function ([#3949]).
+  * `rol`, `rol!`, `ror`, and `ror!` have been deprecated in favor of specialized methods for
+    `circshift`/`circshift!` ([#23404]).
 
-  * ClusterManager makes it possible to support different types of compute clusters
-    ([#3649], [#4014]).
+  * `Base.SparseArrays.SpDiagIterator` has been removed ([#23261]).
 
-  * `rmprocs` for removing processors from a parallel computing session.
-    The system can also tolerate to some extent processors that die unexpectedly
-    ([#3050]).
+  * The tuple-of-types form of `cfunction`, `cfunction(f, returntype, (types...))`, has been deprecated
+    in favor of the tuple-type form `cfunction(f, returntype, Tuple{types...})` ([#23066]).
 
-  * `interrupt` for interrupting worker processes ([#3819]).
+  * `diagm(v::AbstractVector, k::Integer=0)` has been deprecated in favor of
+    `diagm(k => v)` ([#24047]).
 
-  * `timedwait` does a polled wait for an event till a specified timeout.
+  * `diagm(x::Number)` has been deprecated in favor of `fill(x, 1, 1)` ([#24047]).
 
-  * `Condition` type with `wait` and `notify` functions for `Task` synchronization.
+  * `diagm(A::SparseMatrixCSC)` has been deprecated in favor of
+    `spdiagm(sparsevec(A))` ([#23341]).
 
-  * `versioninfo` provides detailed version information, especially useful when
-    reporting and diagnosing bugs.
+  * `diagm(A::BitMatrix)` has been deprecated, use `diagm(0 => vec(A))` or
+    `BitMatrix(Diagonal(vec(A)))` instead ([#23373], [#24047]).
 
-  * `detach` for running child processes in a separate process group.
+  * `ℯ` (written as `\mscre<TAB>` or `\euler<TAB>`) is now the only (by default) exported
+    name for Euler's number, and the type has changed from `Irrational{:e}` to
+    `Irrational{:ℯ}` ([#23427]).
 
-  * `setenv` for passing environment variables to child processes.
+  * The mathematical constants `π`, `pi`, `ℯ`, `e`, `γ`, `eulergamma`, `catalan`, `φ` and
+    `golden` have been moved from `Base` to a new module; `Base.MathConstants`.
+    Only `π`, `pi` and `ℯ` are now exported by default from `Base` ([#23427]).
 
-  * `ifelse` eagerly-evaluated conditional function, especially useful for
-    vectorized conditionals.
+  * `eu` (previously an alias for `ℯ`) has been deprecated in favor of `ℯ` (or `MathConstants.e`) ([#23427]).
 
-Library improvements
---------------------
+  * `GMP.gmp_version()`, `GMP.GMP_VERSION`, `GMP.gmp_bits_per_limb()`, and `GMP.GMP_BITS_PER_LIBM`
+    have been renamed to `GMP.version()`, `GMP.VERSION`, `GMP.bits_per_libm()`, and `GMP.BITS_PER_LIBM`,
+    respectively. Similarly, `MPFR.get_version()`, has been renamed to `MPFR.version()` ([#23323]). Also,
+    `LinAlg.LAPACK.laver()` has been renamed to `LinAlg.LAPACK.version()` and now returns a `VersionNumber`.
 
-  * `isequal` now returns `false` for numbers of different types.
-    This makes it much easier to define hashing for new numeric types.
-    Uses of `Dict` with numeric keys might need to change
-    to account for this increased strictness.
+  * `select`, `select!`, `selectperm` and `selectperm!` have been renamed respectively to
+    `partialsort`, `partialsort!`, `partialsortperm` and `partialsortperm!` ([#23051]).
 
-  * A redesigned and rewritten `Pkg` system is much more robust in case of problems.
-    The basic interface to adding and removing package requirements remains the
-    same, but great deal of additional functionality for developing packages in-place
-    was added. See the new [packages chapter] in the manual for further details.
+  * The `Range` abstract type has been renamed to `AbstractRange` ([#23570]).
 
-  * Sorting API updates ([#3665]) – see [sorting functions].
+  * `map` on dictionaries previously operated on `key=>value` pairs. This behavior is deprecated,
+    and in the future `map` will operate only on values ([#5794]).
 
-  * The `delete!(d::Dict, key)` function has been split into separate `pop!`
-    and `delete!` functions ([#3439]).
-    `pop!(d,key)` removes `key` from `d` and returns the value that was associated with it;
-    it throws an exception if `d` does not contain `key`.
-    `delete!(d,key)` removes `key` from `d` and succeeds regardless of whether `d`
-    contained `key` or not, returning `d` itself in either case.
+  * Automatically broadcasted `+` and `-` for `array + scalar`, `scalar - array`, and so-on have
+    been deprecated due to inconsistency with linear algebra. Use `.+` and `.-` for these operations
+    instead ([#22880], [#22932]).
 
-  * Linear-algebra factorization routines (`lu`, `chol`, etc.) now return
-    `Factorization` objects (and `lud`, `chold`, etc. are deprecated; [#2212]).
+  * `isleaftype` is deprecated in favor of a simpler predicate `isconcrete`. Concrete types are
+    those that might equal `typeof(x)` for some `x`; `isleaftype` includes some types for which
+    this is not true. If you are certain you need the old behavior, it is temporarily available
+    as `Base._isleaftype` ([#17086]).
 
-  * A number of improvements to sparse matrix capabilities and sparse linear algebra.
+  * `contains(eq, itr, item)` is deprecated in favor of `any` with a predicate ([#23716]).
 
-  * More linear algebra fixes and eigensolver hooks
-    for `SymTridiagonal`, `Tridiagonal` and `Bidiagonal` matrix types
-    ([#2606], [#2608], [#2609], [#2611], [#2678], [#2713], [#2720], [#2725]).
+  * `spdiagm(x::AbstractVector)` has been deprecated in favor of `sparse(Diagonal(x))`
+    alternatively `spdiagm(0 => x)` ([#23757]).
 
-  * Change `integer_valued`, `real_valued`, and so on to `isinteger`, `isreal`,
-    and so on, and semantics of the later are now value-based rather than type-based,
-    unlike MATLAB/Octave ([#3071]). `isbool` and `iscomplex` are eliminated in favor
-    of a general `iseltype` function.
+  * `spdiagm(x::AbstractVector, d::Integer)` and `spdiagm(x::Tuple{<:AbstractVector}, d::Tuple{<:Integer})`
+    have been deprecated in favor of `spdiagm(d => x)` and `spdiagm(d[1] => x[1], d[2] => x[2], ...)`
+    respectively. The new `spdiagm` implementation now always returns a square matrix ([#23757]).
 
-  * Transitive comparison of floats with rationals ([#3102]).
+  * `spones(A::AbstractSparseArray)` has been deprecated in favor of
+    `LinAlg.fillstored!(copy(A), 1)` ([#25037]).
 
-  * Fast prime generation with `primes` and fast primality testing with `isprime`.
+  * Constructors for `LibGit2.UserPasswordCredentials` and `LibGit2.SSHCredentials` which take a
+    `prompt_if_incorrect` argument are deprecated. Instead, prompting behavior is controlled using
+    the `allow_prompt` keyword in the `LibGit2.CredentialPayload` constructor ([#23690]).
 
-  * `sum` and `cumsum` now use [pairwise summation] for better accuracy ([#4039]).
+  * `gradient` is deprecated and will be removed in the next release ([#23816]).
 
-  * Dot operators (`.+`, `.*` etc.) now broadcast singleton dimensions of array arguments.
-    This behavior can be applied to any function using `broadcast(f, ...)`.
+  * The timing functions `tic`, `toc`, and `toq` are deprecated in favor of `@time` and `@elapsed`
+    ([#17046]).
 
-  * `combinations`, `permutations`, and `partitions` now return iterators instead of a task,
-    and `integer_partitions` has been renamed to `partitions` ([#3989], [#4055]).
+  * Methods of `findfirst`, `findnext`, `findlast`, and `findprev` that accept a value to
+    search for are deprecated in favor of passing a predicate ([#19186], [#10593]).
 
-  * `isreadable`/`iswritable` methods added for more IO types ([#3872]).
+  * `find` functions now operate only on booleans by default. To look for non-zeros, use
+    `x->x!=0` or `!iszero` ([#23120]).
 
-  * Much faster and improved `readdlm` and `writedlm` ([#3350], [#3468], [#3483]).
+  * The ability of `reinterpret` to yield `Array`s of different type than the underlying storage
+    has been removed. The `reinterpret` function is still available, but now returns a
+    `ReinterpretArray`. The three argument form of `reinterpret` that implicitly reshapes
+    has been deprecated ([#23750]).
 
-  * Faster `matchall` ([#3719]), and various string and regex improvements.
+  * `bits` has been deprecated in favor of `bitstring` ([#24281], [#24263]).
 
-  * Documentation of advanced linear algebra features ([#2807]).
+  * `num2hex` and `hex2num` have been deprecated in favor of `reinterpret` combined with `parse`/`hex` ([#22088]).
 
-  * Support optional RTLD flags in `dlopen` ([#2380]).
+  * `copy!` is deprecated for `AbstractSet` and `AbstractDict`, with the intention to re-enable
+    it with a cleaner meaning in a future version ([#24844]).
 
-  * `pmap` now works with any iterable collection.
+  * `copy!` (resp. `unsafe_copy!`) is deprecated for `AbstractArray` and is renamed `copyto!`
+    (resp. `unsafe_copyto!`); it will be re-introduced with a different meaning in a future
+    version ([#24808]).
 
-  * Options in `pmap` for retrying or ignoring failed tasks.
+  * `a:b` is deprecated for constructing a `StepRange` when `a` and `b` have physical units
+    (Dates and Times). Use `a:s:b`, where `s = Dates.Day(1)` or `s = Dates.Second(1)`.
 
-  * New `sinpi(x)` and `cospi(x)` functions to compute sine and cosine of `pi*x`
-    more accurately ([#4112]).
+  * `trues(A::AbstractArray)` and `falses(A::AbstractArray)` are deprecated in favor of
+    `trues(size(A))` and `falses(size(A))` respectively ([#24595]).
 
-  * New implementations of elementary complex functions
-    `sqrt`, `log`, `asin`, `acos`, `atan`, `tanh`, `asinh`, `acosh`, `atanh`
-    with correct branch cuts ([#2891]).
+  * `workspace` is discontinued, check out [Revise.jl](https://github.com/timholy/Revise.jl)
+    for an alternative workflow ([#25046]).
 
-  * Improved behavior of `SubArray` ([#4412], [#4284], [#4044], [#3697], [#3790],
-    [#3148], [#2844], [#2644] and various other fixes).
+  * `cumsum`, `cumprod`, `accumulate`, their mutating versions, and `diff` all now require a `dim`
+    argument instead of defaulting to using the first dimension unless there is only
+    one dimension ([#24684], [#25457]).
 
-  * New convenience functions in graphics API.
+  * The `sum_kbn` and `cumsum_kbn` functions have been moved to the
+    [KahanSummation](https://github.com/JuliaMath/KahanSummation.jl) package ([#24869]).
 
-  * Improved backtraces on Windows and OS X.
+  * `isnumber` has been renamed to `isnumeric` ([#25021]).
 
-  * Implementation of reduction functions (including `reduce`, `mapreduce`, `sum`, `prod`, 
-    `maximum`, `minimum`, `all`, and `any`) are refactored, with improved type stability, 
-    efficiency, and consistency. ([#6116], [#7035], [#7061], [#7106])
+  * `is_assigned_char` and `normalize_string` have been renamed to `isassigned` and
+    `normalize`, and moved to the new `Unicode` standard library module.
+    `graphemes` has also been moved to that module ([#25021]).
 
-Deprecated or removed
----------------------
+  * The functions `eigs` and `svds` have been moved to the `IterativeEigensolvers` standard
+    library module ([#24714]).
 
-  * Methods of `min` and `max` that do reductions were renamed to
-    `minimum` and `maximum`. `min(x)` is now `minimum(x)`, and
-    `min(x,(),dim)` is now `minimum(x,dim)`. ([#4235])
+  * Sparse array functionality has moved to the `SparseArrays` standard library module ([#25249]).
 
-  * `ComplexPair` was renamed to `Complex` and made `immutable`,
-    and `Complex128` and so on are now aliases to the new `Complex` type.
+  * `@printf` and `@sprintf` have been moved to the `Printf` standard library ([#23929],[#25056]).
 
-  * `!` was added to the name of many mutating functions,
-    e.g., `push` was renamed `push!` ([#907]).
+  * The aliases `Complex32`, `Complex64` and `Complex128` have been deprecated in favor of `ComplexF16`,
+    `ComplexF32` and `ComplexF64` respectively ([#24647]).
 
-  * `ref` renamed to `getindex`, and `assign` to `setindex!` ([#1484]).
+  * `Base.parentindexes` and `SharedArrays.localindexes` have been renamed to `parentindices`
+    and `localindices`, respectively. Similarly, the `indexes` field in the `SubArray` type
+    has been renamed to `indices` without deprecation ([#25088]).
 
-  * `writeable` renamed to `writable` ([#3874]).
+  * `Associative` has been deprecated in favor of `AbstractDict` ([#25012]).
 
-  * `logb` and `ilogb` renamed to `exponent` ([#2516]).
+  * `Void` has been renamed back to `Nothing` with an alias `Cvoid` for use when calling C
+    with a return type of `Cvoid` or a return or argument type of `Ptr{Cvoid}` ([#25162]).
 
-  * `quote_string` became a method of `repr`.
+  * `Nullable{T}` has been deprecated and moved to the Nullables package ([#23642]). Use
+    `Union{T, Nothing}` instead, or `Union{Some{T}, Nothing}` if `nothing` is a possible
+    value (i.e. `Nothing <: T`). `isnull(x)` can be replaced with `x === nothing` and
+    `unsafe_get`/`get` can be dropped or replaced with `coalesce`.
+    `NullException` has been removed.
 
-  * `safe_char`, `check_ascii`, and `check_utf8` replaced by
-    `is_valid_char`, `is_valid_ascii`, and `is_valid_utf8`, respectively.
+  * `unshift!` and `shift!` have been renamed to `pushfirst!` and `popfirst!` ([#23902])
 
-  * `each_line`, `each_match`, `begins_with`, `ends_with`, `parse_float`,
-    `parse_int`, and `seek_end` replaced by: `eachline`, `eachmatch`, and so on
-    (`_` was removed) ([#1539]).
+  * `Nullable{T}` has been deprecated and moved to the Nullables package ([#23642]).
+    Use `Union{T, Void}` instead, or `Union{Some{T}, Void}` if `nothing` is a possible value
+    (i.e. `Void <: T`). `isnull(x)` can be replaced with `x === nothing`
+    and `unsafe_get`/`get` can be dropped or replaced with `coalesce`.
 
-  * `parse_bin(s)` replaced by `parseint(s,2)`;
-    `parse_oct(s)` replaced by `parseint(s,8)`;
-    `parse_hex(s)` replaced by `parseint(s,16)`.
+  * `ipermute!` has been deprecated in favor of `invpermute!` ([#25168]).
 
-  * `findn_nzs` replaced by `findnz` ([#1539]).
+  * `CartesianRange` has been renamed `CartesianIndices` ([#24715]).
 
-  * `DivideByZeroError` replaced by `DivideError`.
+  * `sub2ind` and `ind2sub` are deprecated in favor of using `CartesianIndices` and `LinearIndices` ([#24715]).
 
-  * `addprocs_ssh`, `addprocs_ssh_tunnel`, and `addprocs_local`
-    replaced by `addprocs` (with keyword options).
+  * `getindex(F::Factorizion, s::Symbol)` (usually seen as e.g. `F[:Q]`) is deprecated
+    in favor of dot overloading (`getproperty`) so factors should now be accessed as e.g.
+    `F.Q` instead of `F[:Q]` ([#25184]).
 
-  * `remote_call`, `remote_call_fetch`, and `remote_call_wait`
-    replaced by `remotecall`, `remotecall_fetch`, and `remotecall_wait`.
+  * `search` and `rsearch` have been deprecated in favor of `findfirst`/`findnext` and
+    `findlast`/`findprev` respectively, in combination with the new `equalto` and `occursin`
+    predicates for some methods ([#24673]
 
-  * `has` replaced by `in` for sets and by `haskey` for dictionaries.
+  * `ismatch(regex, str)` has been deprecated in favor of `contains(str, regex)` ([#24673]).
 
-  * `diagmm` and `diagmm!` replaced by `scale` and `scale!` ([#2916]).
+  * `linspace` and `logspace` now require an explicit number of elements to be
+    supplied rather than defaulting to `50`([#24794], [#24805]).
 
-  * `unsafe_ref` and `unsafe_assign` replaced by `unsafe_load` and `unsafe_store!`.
+  * `similar(::Associative)` has been deprecated in favor of `empty(::Associative)`, and
+    `similar(::Associative, ::Pair{K, V})` has been deprecated in favour of
+    `empty(::Associative, K, V)` ([#24390]).
 
-  * `add_each!` and `del_each!` replaced by `union!` and `setdiff!`.
+  * `findin(a, b)` has been deprecated in favor of `find(occursin(b), a)` ([#24673]).
 
-  * `isdenormal` renamed to `issubnormal` ([#3105]).
+  * The generic implementations of `strides(::AbstractArray)` and `stride(::AbstractArray, ::Int)`
+     have been deprecated. Subtypes of `AbstractArray` that implement the newly introduced strided
+     array interface should define their own `strides` method ([#25321]).
 
-  * `expr` replaced by direct call to `Expr` constructor.
 
-  * `|`, `&`, `$`, `-`, and `~` for sets replaced by
-    `union`, `intersect`, `symdiff`, `setdiff`, and `complement` ([#3272]).
+Command-line option changes
+---------------------------
 
-  * `square` function removed.
+  * New option `--warn-overwrite={yes|no}` to control the warning for overwriting method
+    definitions. The default is `no` ([#23002]).
 
-  * `pascal` function removed.
+  * New option `--banner={yes,no}` allows suppressing or forcing the printing of the
+    startup banner, overriding the default behavior (banner in REPL, no banner otherwise).
+    The `--quiet` option implies `--banner=no` even in REPL mode but can be overridden by
+    passing `--quiet` together with `--banner=yes` ([#23342]).
 
-  * `add` and `add!` for `Set` replaced by `push!`.
+  * The option `--precompiled` has been renamed to `--sysimage-native-code` ([#23054]).
 
-  * `ls` function deprecated in favor of `readdir` or `;ls` in the REPL.
+  * The option `--compilecache` has been renamed to `--compiled-modules` ([#23054]).
 
-  * `start_timer` now expects arguments in units of seconds, not milliseconds.
-
-  * Shell redirection operators `|`, `>`, and `<` eliminated in favor of a new
-    operator `|>` ([#3523]).
-
-  * `amap` is deprecated in favor of new `mapslices` functionality.
-
-  * The `Reverse` iterator was removed since it did not work in many cases.
-
-  * The `gcd` function now returns a non-negative value regardless of
-    the argument signs, and various other sign problems with `invmod`,
-    `lcm`, `gcdx`, and `powermod` were fixed ([#4811]).
-
-Miscellaneous changes
----------------------
-
-  * `julia-release-*` executables renamed to `julia-*`,
-    and `libjulia-release` renamed to `libjulia` ([#4177]).
-
-  * Packages will now be installed in `.julia/vX.Y`, where
-    X.Y is the current Julia version.
-
-Bugfixes and performance updates
---------------------------------
-
-Too numerous to mention.
-
-[packages chapter]: http://docs.julialang.org/en/latest/manual/packages/
-[sorting functions]: http://docs.julialang.org/en/latest/stdlib/sort/
-[pairwise summation]: https://en.wikipedia.org/wiki/Pairwise_summation
-[a448e080]: https://github.com/JuliaLang/julia/commit/a448e080dc736c7fb326426dfcb2528be36973d3
-[5e3f074b]: https://github.com/JuliaLang/julia/commit/5e3f074b9173044a0a4219f9b285879ff7cec041
 <!--- generated by NEWS-update.jl: -->
-[#13]: https://github.com/JuliaLang/julia/issues/13
-[#69]: https://github.com/JuliaLang/julia/issues/69
-[#70]: https://github.com/JuliaLang/julia/issues/70
-[#101]: https://github.com/JuliaLang/julia/issues/101
-[#485]: https://github.com/JuliaLang/julia/issues/485
-[#552]: https://github.com/JuliaLang/julia/issues/552
-[#907]: https://github.com/JuliaLang/julia/issues/907
-[#987]: https://github.com/JuliaLang/julia/issues/987
-[#1195]: https://github.com/JuliaLang/julia/issues/1195
-[#1268]: https://github.com/JuliaLang/julia/issues/1268
-[#1484]: https://github.com/JuliaLang/julia/issues/1484
-[#1539]: https://github.com/JuliaLang/julia/issues/1539
-[#1571]: https://github.com/JuliaLang/julia/issues/1571
-[#1815]: https://github.com/JuliaLang/julia/issues/1815
-[#1817]: https://github.com/JuliaLang/julia/issues/1817
-[#2204]: https://github.com/JuliaLang/julia/issues/2204
-[#2212]: https://github.com/JuliaLang/julia/issues/2212
-[#2265]: https://github.com/JuliaLang/julia/issues/2265
-[#2333]: https://github.com/JuliaLang/julia/issues/2333
-[#2345]: https://github.com/JuliaLang/julia/issues/2345
-[#2370]: https://github.com/JuliaLang/julia/issues/2370
-[#2375]: https://github.com/JuliaLang/julia/issues/2375
-[#2380]: https://github.com/JuliaLang/julia/issues/2380
-[#2468]: https://github.com/JuliaLang/julia/issues/2468
-[#2515]: https://github.com/JuliaLang/julia/issues/2515
-[#2516]: https://github.com/JuliaLang/julia/issues/2516
-[#2597]: https://github.com/JuliaLang/julia/issues/2597
-[#2606]: https://github.com/JuliaLang/julia/issues/2606
-[#2608]: https://github.com/JuliaLang/julia/issues/2608
-[#2609]: https://github.com/JuliaLang/julia/issues/2609
-[#2611]: https://github.com/JuliaLang/julia/issues/2611
-[#2644]: https://github.com/JuliaLang/julia/issues/2644
-[#2678]: https://github.com/JuliaLang/julia/issues/2678
-[#2703]: https://github.com/JuliaLang/julia/issues/2703
-[#2713]: https://github.com/JuliaLang/julia/issues/2713
-[#2720]: https://github.com/JuliaLang/julia/issues/2720
-[#2725]: https://github.com/JuliaLang/julia/issues/2725
-[#2807]: https://github.com/JuliaLang/julia/issues/2807
-[#2814]: https://github.com/JuliaLang/julia/issues/2814
-[#2844]: https://github.com/JuliaLang/julia/issues/2844
-[#2891]: https://github.com/JuliaLang/julia/issues/2891
-[#2916]: https://github.com/JuliaLang/julia/issues/2916
-[#2920]: https://github.com/JuliaLang/julia/issues/2920
-[#2987]: https://github.com/JuliaLang/julia/issues/2987
-[#3050]: https://github.com/JuliaLang/julia/issues/3050
-[#3070]: https://github.com/JuliaLang/julia/issues/3070
-[#3071]: https://github.com/JuliaLang/julia/issues/3071
-[#3102]: https://github.com/JuliaLang/julia/issues/3102
-[#3105]: https://github.com/JuliaLang/julia/issues/3105
-[#3140]: https://github.com/JuliaLang/julia/issues/3140
-[#3141]: https://github.com/JuliaLang/julia/issues/3141
-[#3148]: https://github.com/JuliaLang/julia/issues/3148
-[#3149]: https://github.com/JuliaLang/julia/issues/3149
-[#3233]: https://github.com/JuliaLang/julia/issues/3233
-[#3272]: https://github.com/JuliaLang/julia/issues/3272
-[#3344]: https://github.com/JuliaLang/julia/issues/3344
-[#3350]: https://github.com/JuliaLang/julia/issues/3350
-[#3434]: https://github.com/JuliaLang/julia/issues/3434
-[#3439]: https://github.com/JuliaLang/julia/issues/3439
-[#3467]: https://github.com/JuliaLang/julia/issues/3467
-[#3468]: https://github.com/JuliaLang/julia/issues/3468
-[#3483]: https://github.com/JuliaLang/julia/issues/3483
-[#3523]: https://github.com/JuliaLang/julia/issues/3523
-[#3605]: https://github.com/JuliaLang/julia/issues/3605
-[#3649]: https://github.com/JuliaLang/julia/issues/3649
-[#3665]: https://github.com/JuliaLang/julia/issues/3665
-[#3688]: https://github.com/JuliaLang/julia/issues/3688
-[#3697]: https://github.com/JuliaLang/julia/issues/3697
-[#3719]: https://github.com/JuliaLang/julia/issues/3719
-[#3790]: https://github.com/JuliaLang/julia/issues/3790
-[#3819]: https://github.com/JuliaLang/julia/issues/3819
-[#3872]: https://github.com/JuliaLang/julia/issues/3872
-[#3874]: https://github.com/JuliaLang/julia/issues/3874
-[#3878]: https://github.com/JuliaLang/julia/issues/3878
-[#3932]: https://github.com/JuliaLang/julia/issues/3932
-[#3949]: https://github.com/JuliaLang/julia/issues/3949
-[#3989]: https://github.com/JuliaLang/julia/issues/3989
-[#4014]: https://github.com/JuliaLang/julia/issues/4014
-[#4026]: https://github.com/JuliaLang/julia/issues/4026
-[#4039]: https://github.com/JuliaLang/julia/issues/4039
-[#4042]: https://github.com/JuliaLang/julia/issues/4042
-[#4044]: https://github.com/JuliaLang/julia/issues/4044
-[#4048]: https://github.com/JuliaLang/julia/issues/4048
-[#4055]: https://github.com/JuliaLang/julia/issues/4055
-[#4112]: https://github.com/JuliaLang/julia/issues/4112
-[#4130]: https://github.com/JuliaLang/julia/issues/4130
-[#4177]: https://github.com/JuliaLang/julia/issues/4177
-[#4235]: https://github.com/JuliaLang/julia/issues/4235
-[#4284]: https://github.com/JuliaLang/julia/issues/4284
-[#4383]: https://github.com/JuliaLang/julia/issues/4383
-[#4412]: https://github.com/JuliaLang/julia/issues/4412
-[#4670]: https://github.com/JuliaLang/julia/issues/4670
-[#4759]: https://github.com/JuliaLang/julia/issues/4759
-[#4766]: https://github.com/JuliaLang/julia/issues/4766
-[#4775]: https://github.com/JuliaLang/julia/issues/4775
-[#4782]: https://github.com/JuliaLang/julia/issues/4782
-[#4799]: https://github.com/JuliaLang/julia/issues/4799
-[#4806]: https://github.com/JuliaLang/julia/issues/4806
-[#4811]: https://github.com/JuliaLang/julia/issues/4811
-[#4819]: https://github.com/JuliaLang/julia/issues/4819
-[#4862]: https://github.com/JuliaLang/julia/issues/4862
-[#4870]: https://github.com/JuliaLang/julia/issues/4870
-[#4871]: https://github.com/JuliaLang/julia/issues/4871
-[#4874]: https://github.com/JuliaLang/julia/issues/4874
-[#4882]: https://github.com/JuliaLang/julia/issues/4882
-[#4888]: https://github.com/JuliaLang/julia/issues/4888
-[#4930]: https://github.com/JuliaLang/julia/issues/4930
-[#4934]: https://github.com/JuliaLang/julia/issues/4934
-[#4943]: https://github.com/JuliaLang/julia/issues/4943
-[#4958]: https://github.com/JuliaLang/julia/issues/4958
-[#4967]: https://github.com/JuliaLang/julia/issues/4967
-[#4996]: https://github.com/JuliaLang/julia/issues/4996
-[#5007]: https://github.com/JuliaLang/julia/issues/5007
-[#5025]: https://github.com/JuliaLang/julia/issues/5025
-[#5059]: https://github.com/JuliaLang/julia/issues/5059
-[#5076]: https://github.com/JuliaLang/julia/issues/5076
-[#5154]: https://github.com/JuliaLang/julia/issues/5154
-[#5164]: https://github.com/JuliaLang/julia/issues/5164
-[#5196]: https://github.com/JuliaLang/julia/issues/5196
-[#5214]: https://github.com/JuliaLang/julia/issues/5214
-[#5255]: https://github.com/JuliaLang/julia/issues/5255
-[#5263]: https://github.com/JuliaLang/julia/issues/5263
-[#5275]: https://github.com/JuliaLang/julia/issues/5275
-[#5277]: https://github.com/JuliaLang/julia/issues/5277
-[#5330]: https://github.com/JuliaLang/julia/issues/5330
-[#5358]: https://github.com/JuliaLang/julia/issues/5358
-[#5380]: https://github.com/JuliaLang/julia/issues/5380
-[#5381]: https://github.com/JuliaLang/julia/issues/5381
-[#5387]: https://github.com/JuliaLang/julia/issues/5387
-[#5403]: https://github.com/JuliaLang/julia/issues/5403
-[#5423]: https://github.com/JuliaLang/julia/issues/5423
-[#5427]: https://github.com/JuliaLang/julia/issues/5427
-[#5428]: https://github.com/JuliaLang/julia/issues/5428
-[#5430]: https://github.com/JuliaLang/julia/issues/5430
-[#5462]: https://github.com/JuliaLang/julia/issues/5462
-[#5464]: https://github.com/JuliaLang/julia/issues/5464
-[#5468]: https://github.com/JuliaLang/julia/issues/5468
-[#5475]: https://github.com/JuliaLang/julia/issues/5475
-[#5511]: https://github.com/JuliaLang/julia/issues/5511
-[#5526]: https://github.com/JuliaLang/julia/issues/5526
-[#5545]: https://github.com/JuliaLang/julia/issues/5545
-[#5576]: https://github.com/JuliaLang/julia/issues/5576
-[#5585]: https://github.com/JuliaLang/julia/issues/5585
-[#5636]: https://github.com/JuliaLang/julia/issues/5636
-[#5671]: https://github.com/JuliaLang/julia/issues/5671
-[#5677]: https://github.com/JuliaLang/julia/issues/5677
-[#5703]: https://github.com/JuliaLang/julia/issues/5703
-[#5726]: https://github.com/JuliaLang/julia/issues/5726
-[#5737]: https://github.com/JuliaLang/julia/issues/5737
-[#5748]: https://github.com/JuliaLang/julia/issues/5748
-[#5776]: https://github.com/JuliaLang/julia/issues/5776
-[#5778]: https://github.com/JuliaLang/julia/issues/5778
-[#5810]: https://github.com/JuliaLang/julia/issues/5810
-[#5811]: https://github.com/JuliaLang/julia/issues/5811
-[#5819]: https://github.com/JuliaLang/julia/issues/5819
-[#5827]: https://github.com/JuliaLang/julia/issues/5827
-[#5832]: https://github.com/JuliaLang/julia/issues/5832
-[#5927]: https://github.com/JuliaLang/julia/issues/5927
-[#5936]: https://github.com/JuliaLang/julia/issues/5936
-[#5970]: https://github.com/JuliaLang/julia/issues/5970
-[#6056]: https://github.com/JuliaLang/julia/issues/6056
-[#6057]: https://github.com/JuliaLang/julia/issues/6057
-[#6073]: https://github.com/JuliaLang/julia/issues/6073
-[#6116]: https://github.com/JuliaLang/julia/issues/6116
-[#6128]: https://github.com/JuliaLang/julia/issues/6128
-[#6169]: https://github.com/JuliaLang/julia/issues/6169
-[#6179]: https://github.com/JuliaLang/julia/issues/6179
-[#6197]: https://github.com/JuliaLang/julia/issues/6197
-[#6212]: https://github.com/JuliaLang/julia/issues/6212
-[#6270]: https://github.com/JuliaLang/julia/issues/6270
-[#6273]: https://github.com/JuliaLang/julia/issues/6273
-[#6582]: https://github.com/JuliaLang/julia/issues/6582
-[#6624]: https://github.com/JuliaLang/julia/issues/6624
-[#6652]: https://github.com/JuliaLang/julia/issues/6652
-[#6678]: https://github.com/JuliaLang/julia/issues/6678
-[#6716]: https://github.com/JuliaLang/julia/issues/6716
-[#6726]: https://github.com/JuliaLang/julia/issues/6726
-[#6769]: https://github.com/JuliaLang/julia/issues/6769
-[#6773]: https://github.com/JuliaLang/julia/issues/6773
-[#6911]: https://github.com/JuliaLang/julia/issues/6911
-[#6920]: https://github.com/JuliaLang/julia/issues/6920
-[#6929]: https://github.com/JuliaLang/julia/issues/6929
-[#6948]: https://github.com/JuliaLang/julia/issues/6948
-[#7016]: https://github.com/JuliaLang/julia/issues/7016
-[#7035]: https://github.com/JuliaLang/julia/issues/7035
-[#7047]: https://github.com/JuliaLang/julia/issues/7047
-[#7061]: https://github.com/JuliaLang/julia/issues/7061
-[#7064]: https://github.com/JuliaLang/julia/issues/7064
-[#7071]: https://github.com/JuliaLang/julia/issues/7071
-[#7094]: https://github.com/JuliaLang/julia/issues/7094
-[#7106]: https://github.com/JuliaLang/julia/issues/7106
-[#7125]: https://github.com/JuliaLang/julia/issues/7125
-[#7131]: https://github.com/JuliaLang/julia/issues/7131
-[#7146]: https://github.com/JuliaLang/julia/issues/7146
-[#7242]: https://github.com/JuliaLang/julia/issues/7242
-[#7359]: https://github.com/JuliaLang/julia/issues/7359
-[#7365]: https://github.com/JuliaLang/julia/issues/7365
-[#7373]: https://github.com/JuliaLang/julia/issues/7373
-[#7390]: https://github.com/JuliaLang/julia/issues/7390
-[#7435]: https://github.com/JuliaLang/julia/issues/7435
-[#7464]: https://github.com/JuliaLang/julia/issues/7464
-[#7513]: https://github.com/JuliaLang/julia/issues/7513
-[#7647]: https://github.com/JuliaLang/julia/issues/7647
+[#1974]: https://github.com/JuliaLang/julia/issues/1974
+[#4916]: https://github.com/JuliaLang/julia/issues/4916
+[#5148]: https://github.com/JuliaLang/julia/issues/5148
+[#5794]: https://github.com/JuliaLang/julia/issues/5794
+[#6080]: https://github.com/JuliaLang/julia/issues/6080
+[#6466]: https://github.com/JuliaLang/julia/issues/6466
+[#6614]: https://github.com/JuliaLang/julia/issues/6614
+[#8000]: https://github.com/JuliaLang/julia/issues/8000
+[#8470]: https://github.com/JuliaLang/julia/issues/8470
+[#9292]: https://github.com/JuliaLang/julia/issues/9292
+[#10593]: https://github.com/JuliaLang/julia/issues/10593
+[#11310]: https://github.com/JuliaLang/julia/issues/11310
+[#12131]: https://github.com/JuliaLang/julia/issues/12131
+[#13079]: https://github.com/JuliaLang/julia/issues/13079
+[#14770]: https://github.com/JuliaLang/julia/issues/14770
+[#15120]: https://github.com/JuliaLang/julia/issues/15120
+[#16356]: https://github.com/JuliaLang/julia/issues/16356
+[#16401]: https://github.com/JuliaLang/julia/issues/16401
+[#16937]: https://github.com/JuliaLang/julia/issues/16937
+[#17046]: https://github.com/JuliaLang/julia/issues/17046
+[#17086]: https://github.com/JuliaLang/julia/issues/17086
+[#17240]: https://github.com/JuliaLang/julia/issues/17240
+[#17360]: https://github.com/JuliaLang/julia/issues/17360
+[#17367]: https://github.com/JuliaLang/julia/issues/17367
+[#17886]: https://github.com/JuliaLang/julia/issues/17886
+[#17997]: https://github.com/JuliaLang/julia/issues/17997
+[#18155]: https://github.com/JuliaLang/julia/issues/18155
+[#18650]: https://github.com/JuliaLang/julia/issues/18650
+[#19089]: https://github.com/JuliaLang/julia/issues/19089
+[#19157]: https://github.com/JuliaLang/julia/issues/19157
+[#19186]: https://github.com/JuliaLang/julia/issues/19186
+[#19987]: https://github.com/JuliaLang/julia/issues/19987
+[#20005]: https://github.com/JuliaLang/julia/issues/20005
+[#20233]: https://github.com/JuliaLang/julia/issues/20233
+[#20418]: https://github.com/JuliaLang/julia/issues/20418
+[#20549]: https://github.com/JuliaLang/julia/issues/20549
+[#20575]: https://github.com/JuliaLang/julia/issues/20575
+[#20740]: https://github.com/JuliaLang/julia/issues/20740
+[#20816]: https://github.com/JuliaLang/julia/issues/20816
+[#20899]: https://github.com/JuliaLang/julia/issues/20899
+[#20912]: https://github.com/JuliaLang/julia/issues/20912
+[#20974]: https://github.com/JuliaLang/julia/issues/20974
+[#21359]: https://github.com/JuliaLang/julia/issues/21359
+[#21438]: https://github.com/JuliaLang/julia/issues/21438
+[#21450]: https://github.com/JuliaLang/julia/issues/21450
+[#21527]: https://github.com/JuliaLang/julia/issues/21527
+[#21540]: https://github.com/JuliaLang/julia/issues/21540
+[#21592]: https://github.com/JuliaLang/julia/issues/21592
+[#21662]: https://github.com/JuliaLang/julia/issues/21662
+[#21692]: https://github.com/JuliaLang/julia/issues/21692
+[#21697]: https://github.com/JuliaLang/julia/issues/21697
+[#21709]: https://github.com/JuliaLang/julia/issues/21709
+[#21746]: https://github.com/JuliaLang/julia/issues/21746
+[#21759]: https://github.com/JuliaLang/julia/issues/21759
+[#21774]: https://github.com/JuliaLang/julia/issues/21774
+[#21825]: https://github.com/JuliaLang/julia/issues/21825
+[#21956]: https://github.com/JuliaLang/julia/issues/21956
+[#21960]: https://github.com/JuliaLang/julia/issues/21960
+[#21973]: https://github.com/JuliaLang/julia/issues/21973
+[#21974]: https://github.com/JuliaLang/julia/issues/21974
+[#22007]: https://github.com/JuliaLang/julia/issues/22007
+[#22038]: https://github.com/JuliaLang/julia/issues/22038
+[#22062]: https://github.com/JuliaLang/julia/issues/22062
+[#22064]: https://github.com/JuliaLang/julia/issues/22064
+[#22088]: https://github.com/JuliaLang/julia/issues/22088
+[#22089]: https://github.com/JuliaLang/julia/issues/22089
+[#22092]: https://github.com/JuliaLang/julia/issues/22092
+[#22182]: https://github.com/JuliaLang/julia/issues/22182
+[#22187]: https://github.com/JuliaLang/julia/issues/22187
+[#22188]: https://github.com/JuliaLang/julia/issues/22188
+[#22194]: https://github.com/JuliaLang/julia/issues/22194
+[#22210]: https://github.com/JuliaLang/julia/issues/22210
+[#22224]: https://github.com/JuliaLang/julia/issues/22224
+[#22228]: https://github.com/JuliaLang/julia/issues/22228
+[#22245]: https://github.com/JuliaLang/julia/issues/22245
+[#22251]: https://github.com/JuliaLang/julia/issues/22251
+[#22274]: https://github.com/JuliaLang/julia/issues/22274
+[#22281]: https://github.com/JuliaLang/julia/issues/22281
+[#22296]: https://github.com/JuliaLang/julia/issues/22296
+[#22310]: https://github.com/JuliaLang/julia/issues/22310
+[#22314]: https://github.com/JuliaLang/julia/issues/22314
+[#22324]: https://github.com/JuliaLang/julia/issues/22324
+[#22325]: https://github.com/JuliaLang/julia/issues/22325
+[#22350]: https://github.com/JuliaLang/julia/issues/22350
+[#22390]: https://github.com/JuliaLang/julia/issues/22390
+[#22496]: https://github.com/JuliaLang/julia/issues/22496
+[#22511]: https://github.com/JuliaLang/julia/issues/22511
+[#22523]: https://github.com/JuliaLang/julia/issues/22523
+[#22532]: https://github.com/JuliaLang/julia/issues/22532
+[#22572]: https://github.com/JuliaLang/julia/issues/22572
+[#22588]: https://github.com/JuliaLang/julia/issues/22588
+[#22605]: https://github.com/JuliaLang/julia/issues/22605
+[#22666]: https://github.com/JuliaLang/julia/issues/22666
+[#22696]: https://github.com/JuliaLang/julia/issues/22696
+[#22703]: https://github.com/JuliaLang/julia/issues/22703
+[#22712]: https://github.com/JuliaLang/julia/issues/22712
+[#22718]: https://github.com/JuliaLang/julia/issues/22718
+[#22720]: https://github.com/JuliaLang/julia/issues/22720
+[#22723]: https://github.com/JuliaLang/julia/issues/22723
+[#22732]: https://github.com/JuliaLang/julia/issues/22732
+[#22742]: https://github.com/JuliaLang/julia/issues/22742
+[#22751]: https://github.com/JuliaLang/julia/issues/22751
+[#22761]: https://github.com/JuliaLang/julia/issues/22761
+[#22762]: https://github.com/JuliaLang/julia/issues/22762
+[#22789]: https://github.com/JuliaLang/julia/issues/22789
+[#22793]: https://github.com/JuliaLang/julia/issues/22793
+[#22796]: https://github.com/JuliaLang/julia/issues/22796
+[#22800]: https://github.com/JuliaLang/julia/issues/22800
+[#22801]: https://github.com/JuliaLang/julia/issues/22801
+[#22814]: https://github.com/JuliaLang/julia/issues/22814
+[#22825]: https://github.com/JuliaLang/julia/issues/22825
+[#22829]: https://github.com/JuliaLang/julia/issues/22829
+[#22847]: https://github.com/JuliaLang/julia/issues/22847
+[#22868]: https://github.com/JuliaLang/julia/issues/22868
+[#22880]: https://github.com/JuliaLang/julia/issues/22880
+[#22907]: https://github.com/JuliaLang/julia/issues/22907
+[#22925]: https://github.com/JuliaLang/julia/issues/22925
+[#22926]: https://github.com/JuliaLang/julia/issues/22926
+[#22932]: https://github.com/JuliaLang/julia/issues/22932
+[#22961]: https://github.com/JuliaLang/julia/issues/22961
+[#22984]: https://github.com/JuliaLang/julia/issues/22984
+[#23002]: https://github.com/JuliaLang/julia/issues/23002
+[#23035]: https://github.com/JuliaLang/julia/issues/23035
+[#23051]: https://github.com/JuliaLang/julia/issues/23051
+[#23054]: https://github.com/JuliaLang/julia/issues/23054
+[#23066]: https://github.com/JuliaLang/julia/issues/23066
+[#23117]: https://github.com/JuliaLang/julia/issues/23117
+[#23120]: https://github.com/JuliaLang/julia/issues/23120
+[#23144]: https://github.com/JuliaLang/julia/issues/23144
+[#23154]: https://github.com/JuliaLang/julia/issues/23154
+[#23157]: https://github.com/JuliaLang/julia/issues/23157
+[#23168]: https://github.com/JuliaLang/julia/issues/23168
+[#23187]: https://github.com/JuliaLang/julia/issues/23187
+[#23207]: https://github.com/JuliaLang/julia/issues/23207
+[#23233]: https://github.com/JuliaLang/julia/issues/23233
+[#23235]: https://github.com/JuliaLang/julia/issues/23235
+[#23261]: https://github.com/JuliaLang/julia/issues/23261
+[#23323]: https://github.com/JuliaLang/julia/issues/23323
+[#23341]: https://github.com/JuliaLang/julia/issues/23341
+[#23342]: https://github.com/JuliaLang/julia/issues/23342
+[#23366]: https://github.com/JuliaLang/julia/issues/23366
+[#23373]: https://github.com/JuliaLang/julia/issues/23373
+[#23404]: https://github.com/JuliaLang/julia/issues/23404
+[#23427]: https://github.com/JuliaLang/julia/issues/23427
+[#23504]: https://github.com/JuliaLang/julia/issues/23504
+[#23505]: https://github.com/JuliaLang/julia/issues/23505
+[#23519]: https://github.com/JuliaLang/julia/issues/23519
+[#23528]: https://github.com/JuliaLang/julia/issues/23528
+[#23529]: https://github.com/JuliaLang/julia/issues/23529
+[#23530]: https://github.com/JuliaLang/julia/issues/23530
+[#23570]: https://github.com/JuliaLang/julia/issues/23570
+[#23628]: https://github.com/JuliaLang/julia/issues/23628
+[#23642]: https://github.com/JuliaLang/julia/issues/23642
+[#23665]: https://github.com/JuliaLang/julia/issues/23665
+[#23690]: https://github.com/JuliaLang/julia/issues/23690
+[#23716]: https://github.com/JuliaLang/julia/issues/23716
+[#23750]: https://github.com/JuliaLang/julia/issues/23750
+[#23757]: https://github.com/JuliaLang/julia/issues/23757
+[#23805]: https://github.com/JuliaLang/julia/issues/23805
+[#23812]: https://github.com/JuliaLang/julia/issues/23812
+[#23816]: https://github.com/JuliaLang/julia/issues/23816
+[#23885]: https://github.com/JuliaLang/julia/issues/23885
+[#23902]: https://github.com/JuliaLang/julia/issues/23902
+[#23912]: https://github.com/JuliaLang/julia/issues/23912
+[#23923]: https://github.com/JuliaLang/julia/issues/23923
+[#23929]: https://github.com/JuliaLang/julia/issues/23929
+[#23960]: https://github.com/JuliaLang/julia/issues/23960
+[#24047]: https://github.com/JuliaLang/julia/issues/24047
+[#24126]: https://github.com/JuliaLang/julia/issues/24126
+[#24153]: https://github.com/JuliaLang/julia/issues/24153
+[#24167]: https://github.com/JuliaLang/julia/issues/24167
+[#24187]: https://github.com/JuliaLang/julia/issues/24187
+[#24221]: https://github.com/JuliaLang/julia/issues/24221
+[#24240]: https://github.com/JuliaLang/julia/issues/24240
+[#24245]: https://github.com/JuliaLang/julia/issues/24245
+[#24250]: https://github.com/JuliaLang/julia/issues/24250
+[#24263]: https://github.com/JuliaLang/julia/issues/24263
+[#24278]: https://github.com/JuliaLang/julia/issues/24278
+[#24279]: https://github.com/JuliaLang/julia/issues/24279
+[#24281]: https://github.com/JuliaLang/julia/issues/24281
+[#24320]: https://github.com/JuliaLang/julia/issues/24320
+[#24356]: https://github.com/JuliaLang/julia/issues/24356
+[#24362]: https://github.com/JuliaLang/julia/issues/24362
+[#24390]: https://github.com/JuliaLang/julia/issues/24390
+[#24396]: https://github.com/JuliaLang/julia/issues/24396
+[#24404]: https://github.com/JuliaLang/julia/issues/24404
+[#24413]: https://github.com/JuliaLang/julia/issues/24413
+[#24414]: https://github.com/JuliaLang/julia/issues/24414
+[#24438]: https://github.com/JuliaLang/julia/issues/24438
+[#24445]: https://github.com/JuliaLang/julia/issues/24445
+[#24452]: https://github.com/JuliaLang/julia/issues/24452
+[#24472]: https://github.com/JuliaLang/julia/issues/24472
+[#24490]: https://github.com/JuliaLang/julia/issues/24490
+[#24580]: https://github.com/JuliaLang/julia/issues/24580
+[#24595]: https://github.com/JuliaLang/julia/issues/24595
+[#24605]: https://github.com/JuliaLang/julia/issues/24605
+[#24647]: https://github.com/JuliaLang/julia/issues/24647
+[#24653]: https://github.com/JuliaLang/julia/issues/24653
+[#24654]: https://github.com/JuliaLang/julia/issues/24654
+[#24656]: https://github.com/JuliaLang/julia/issues/24656
+[#24673]: https://github.com/JuliaLang/julia/issues/24673
+[#24679]: https://github.com/JuliaLang/julia/issues/24679
+[#24684]: https://github.com/JuliaLang/julia/issues/24684
+[#24713]: https://github.com/JuliaLang/julia/issues/24713
+[#24714]: https://github.com/JuliaLang/julia/issues/24714
+[#24715]: https://github.com/JuliaLang/julia/issues/24715
+[#24774]: https://github.com/JuliaLang/julia/issues/24774
+[#24781]: https://github.com/JuliaLang/julia/issues/24781
+[#24785]: https://github.com/JuliaLang/julia/issues/24785
+[#24786]: https://github.com/JuliaLang/julia/issues/24786
+[#24794]: https://github.com/JuliaLang/julia/issues/24794
+[#24805]: https://github.com/JuliaLang/julia/issues/24805
+[#24808]: https://github.com/JuliaLang/julia/issues/24808
+[#24831]: https://github.com/JuliaLang/julia/issues/24831
+[#24839]: https://github.com/JuliaLang/julia/issues/24839
+[#24844]: https://github.com/JuliaLang/julia/issues/24844
+[#24869]: https://github.com/JuliaLang/julia/issues/24869
+[#25012]: https://github.com/JuliaLang/julia/issues/25012
+[#25021]: https://github.com/JuliaLang/julia/issues/25021
+[#25030]: https://github.com/JuliaLang/julia/issues/25030
+[#25037]: https://github.com/JuliaLang/julia/issues/25037
+[#25046]: https://github.com/JuliaLang/julia/issues/25046
+[#25056]: https://github.com/JuliaLang/julia/issues/25056
+[#25057]: https://github.com/JuliaLang/julia/issues/25057
+[#25067]: https://github.com/JuliaLang/julia/issues/25067
+[#25088]: https://github.com/JuliaLang/julia/issues/25088
+[#25162]: https://github.com/JuliaLang/julia/issues/25162
+[#25165]: https://github.com/JuliaLang/julia/issues/25165
+[#25168]: https://github.com/JuliaLang/julia/issues/25168
+[#25184]: https://github.com/JuliaLang/julia/issues/25184
+[#25231]: https://github.com/JuliaLang/julia/issues/25231
+[#25365]: https://github.com/JuliaLang/julia/issues/25365
+[#25424]: https://github.com/JuliaLang/julia/issues/25424

@@ -1,43 +1,61 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 module Write
 
-import ..Git, ..Cache, ..Read
+import ..Cache, ..Read, ...Pkg.PkgError
+using ...LibGit2
 
-function prefetch(pkg::String, sha1::String)
+function prefetch(pkg::AbstractString, sha1::AbstractString)
     isempty(Cache.prefetch(pkg, Read.url(pkg), sha1)) && return
-    error("$pkg: couldn't find commit $(sha1[1:10])")
+    throw(PkgError("$pkg: couldn't find commit $(sha1[1:10])"))
 end
 
-function fetch(pkg::String, sha1::String)
-    refspec = "+refs/*:refs/remotes/cache/*"
-    Git.run(`fetch -q $(Cache.path(pkg)) $refspec`, dir=pkg)
-    Git.iscommit(sha1, dir=pkg) && return
-    f = Git.iscommit(sha1, dir=Cache.path(pkg)) ? "fetch" : "prefetch"
-    error("$pkg: $f failed to get commit $(sha1[1:10]), please file a bug")
-end
-
-function checkout(pkg::String, sha1::String)
-    Git.set_remote_url(Read.url(pkg), dir=pkg)
-    Git.run(`checkout -q $sha1`, dir=pkg)
-end
-
-function install(pkg::String, sha1::String)
-    prefetch(pkg, sha1)
-    if isdir(".trash/$pkg")
-        mv(".trash/$pkg", "./$pkg")
+function fetch(repo::GitRepo, pkg::AbstractString, sha1::AbstractString)
+    cache = Cache.path(pkg)
+    LibGit2.fetch(repo, remoteurl=cache, refspecs=["+refs/*:refs/remotes/cache/*"])
+    LibGit2.need_update(repo)
+    LibGit2.iscommit(sha1, repo) && return
+    f = with(GitRepo, cache) do repo
+         LibGit2.iscommit(sha1, repo)
+    end ? "fetch" : "prefetch"
+    url = Read.issue_url(pkg)
+    if isempty(url)
+        throw(PkgError("$pkg: $f failed to get commit $(sha1[1:10]), please file a bug report with the package author."))
     else
-        Git.run(`clone -q $(Cache.path(pkg)) $pkg`)
+        throw(PkgError("$pkg: $f failed to get commit $(sha1[1:10]), please file an issue at $url"))
     end
-    fetch(pkg, sha1)
-    checkout(pkg, sha1)
 end
 
-function update(pkg::String, sha1::String)
+function checkout(repo::GitRepo, pkg::AbstractString, sha1::AbstractString)
+    LibGit2.set_remote_url(repo, "origin", Cache.normalize_url(Read.url(pkg)))
+    LibGit2.checkout!(repo, sha1)
+end
+
+function install(pkg::AbstractString, sha1::AbstractString)
     prefetch(pkg, sha1)
-    fetch(pkg, sha1)
-    checkout(pkg, sha1)
+    repo = if isdir(".trash/$pkg")
+        mv(".trash/$pkg", "./$pkg") #TODO check for newer version in cache before moving
+        GitRepo(pkg)
+    else
+        LibGit2.clone(Cache.path(pkg), pkg)
+    end
+    try
+        fetch(repo, pkg, sha1)
+        checkout(repo, pkg, sha1)
+    finally
+        close(repo)
+    end
 end
 
-function remove(pkg::String)
+function update(pkg::AbstractString, sha1::AbstractString)
+    prefetch(pkg, sha1)
+    with(GitRepo, pkg) do repo
+        fetch(repo, pkg, sha1)
+        checkout(repo, pkg, sha1)
+    end
+end
+
+function remove(pkg::AbstractString)
     isdir(".trash") || mkdir(".trash")
     ispath(".trash/$pkg") && rm(".trash/$pkg", recursive=true)
     mv(pkg, ".trash/$pkg")

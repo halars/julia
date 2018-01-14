@@ -1,31 +1,33 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 ## efficient value-based hashing of integers ##
 
-function hash_integer(n::Integer, h::Uint)
-    h = hash_uint(uint(n & typemax(Uint)) $ h) $ h
-    n = ifelse(n < 0, oftype(n,-n), n)
-    n >>>= sizeof(Uint) << 3
+function hash_integer(n::Integer, h::UInt)
+    h ⊻= hash_uint((n % UInt) ⊻ h)
+    n = abs(n)
+    n >>>= sizeof(UInt) << 3
     while n != 0
-        h = hash_uint(uint(n & typemax(Uint)) $ h) $ h
-        n >>>= sizeof(Uint) << 3
+        h ⊻= hash_uint((n % UInt) ⊻ h)
+        n >>>= sizeof(UInt) << 3
     end
     return h
 end
 
-function hash_integer(n::BigInt, h::Uint)
+function hash_integer(n::BigInt, h::UInt)
     s = n.size
     s == 0 && return hash_integer(0, h)
-    p = convert(Ptr{Uint}, n.d)
+    p = convert(Ptr{UInt}, n.d)
     b = unsafe_load(p)
-    h = hash_uint(ifelse(s < 0, -b, b) $ h) $ h
+    h ⊻= hash_uint(ifelse(s < 0, -b, b) ⊻ h)
     for k = 2:abs(s)
-        h = hash_uint(unsafe_load(p, k) $ h) $ h
+        h ⊻= hash_uint(unsafe_load(p, k) ⊻ h)
     end
     return h
 end
 
 ## generic hashing for rational values ##
 
-function hash(x::Real, h::Uint)
+function hash(x::Real, h::UInt)
     # decompose x as num*2^pow/den
     num, pow, den = decompose(x)
 
@@ -50,16 +52,16 @@ function hash(x::Real, h::Uint)
         pow -= z
     end
 
-    # handle values representable as Int64, Uint64, Float64
+    # handle values representable as Int64, UInt64, Float64
     if den == 1
         left = ndigits0z(num,2) + pow
         right = trailing_zeros(num) + pow
         if -1074 <= right
             if 0 <= right && left <= 64
-                left <= 63                     && return hash(int64(num) << int(pow), h)
-                signbit(num) == signbit(den)   && return hash(uint64(num) << int(pow), h)
+                left <= 63                     && return hash(Int64(num) << Int(pow), h)
+                signbit(num) == signbit(den)   && return hash(UInt64(num) << Int(pow), h)
             end # typemin(Int64) handled by Float64 case
-            left <= 1024 && left - right <= 53 && return hash(float64(num) * 2.0^pow, h)
+            left <= 1024 && left - right <= 53 && return hash(ldexp(Float64(num),pow), h)
         end
     end
 
@@ -82,7 +84,7 @@ values `num, pow, den`, such that the value of `x` is mathematically equal to
 The decomposition need not be canonical in the sense that it just needs to be *some*
 way to express `x` in this form, not any particular way – with the restriction that
 `num` and `den` may not share any odd common factors. They may, however, have powers
-of two in common – the generic hashing code will normalize those as necessary.
+of two in common – the generic hashing code will normalize those as necessary.
 
 Special values:
 
@@ -92,45 +94,57 @@ Special values:
 =#
 
 decompose(x::Integer) = x, 0, 1
-decompose(x::Rational) = num(x), 0, den(x)
+decompose(x::Rational) = numerator(x), 0, denominator(x)
 
-function decompose(x::Float32)
+function decompose(x::Float16)::NTuple{3,Int}
     isnan(x) && return 0, 0, 0
     isinf(x) && return ifelse(x < 0, -1, 1), 0, 0
-    n = reinterpret(Int32, x)
-    s = int32(n & 0x007fffff)
-    e = int32(n & 0x7f800000 >> 23)
-    s |= int32(e != 0) << 23
-    d = ifelse(signbit(n) == 1, -1, 1)
-    int(s), int(e - 150 + (e == 0)), d
+    n = reinterpret(UInt16, x)
+    s = (n & 0x03ff) % Int16
+    e = (n & 0x7c00 >> 10) % Int
+    s |= Int16(e != 0) << 10
+    d = ifelse(signbit(x), -1, 1)
+    s, e - 25 + (e == 0), d
 end
 
-function decompose(x::Float64)
+function decompose(x::Float32)::NTuple{3,Int}
     isnan(x) && return 0, 0, 0
     isinf(x) && return ifelse(x < 0, -1, 1), 0, 0
-    n = reinterpret(Int64, x)
-    s = int64(n & 0x000fffffffffffff)
-    e = int64(n & 0x7ff0000000000000 >> 52)
-    s |= int64(e != 0) << 52
-    d = ifelse(signbit(n) == 1, -1, 1)
-    int(s), int(e - 1075 + (e == 0)), d
+    n = reinterpret(UInt32, x)
+    s = (n & 0x007fffff) % Int32
+    e = (n & 0x7f800000 >> 23) % Int
+    s |= Int32(e != 0) << 23
+    d = ifelse(signbit(x), -1, 1)
+    s, e - 150 + (e == 0), d
 end
 
-function decompose(x::BigFloat)
-    isnan(x) && return big(0), 0, 0
-    isinf(x) && return big(x.sign), 0, 0
-    x == 0 && return big(0), 0, int(x.sign)
+function decompose(x::Float64)::Tuple{Int64, Int, Int}
+    isnan(x) && return 0, 0, 0
+    isinf(x) && return ifelse(x < 0, -1, 1), 0, 0
+    n = reinterpret(UInt64, x)
+    s = (n & 0x000fffffffffffff) % Int64
+    e = (n & 0x7ff0000000000000 >> 52) % Int
+    s |= Int64(e != 0) << 52
+    d = ifelse(signbit(x), -1, 1)
+    s, e - 1075 + (e == 0), d
+end
+
+function decompose(x::BigFloat)::Tuple{BigInt, Int, Int}
+    isnan(x) && return 0, 0, 0
+    isinf(x) && return x.sign, 0, 0
+    x == 0 && return 0, 0, x.sign
     s = BigInt()
-    ccall((:__gmpz_realloc2, :libgmp), Void, (Ptr{BigInt}, Culong), &s, x.prec)
-    s.size = -fld(-x.prec,(sizeof(Culong)<<3))
-    ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, Csize_t), s.d, x.d, s.size*sizeof(Culong))
-    s, int(x.exp - x.prec), int(x.sign)
+    s.size = cld(x.prec, 8*sizeof(GMP.Limb)) # limbs
+    b = s.size * sizeof(GMP.Limb)            # bytes
+    ccall((:__gmpz_realloc2, :libgmp), Cvoid, (Ref{BigInt}, Culong), s, 8b) # bits
+    ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), s.d, x.d, b) # bytes
+    s, x.exp - 8b, x.sign
 end
 
 ## streamlined hashing for smallish rational types ##
 
-function hash{T<:Integer64}(x::Rational{T}, h::Uint)
-    num, den = Base.num(x), Base.den(x)
+function hash(x::Rational{<:BitInteger64}, h::UInt)
+    num, den = Base.numerator(x), Base.denominator(x)
     den == 1 && return hash(num, h)
     den == 0 && return hash(ifelse(num > 0, Inf, -Inf), h)
     if isodd(den)
@@ -141,7 +155,7 @@ function hash{T<:Integer64}(x::Rational{T}, h::Uint)
         den >>= pow
         pow = -pow
         if den == 1 && abs(num) < 9007199254740992
-            return hash(float64(num) * 2.0^pow)
+            return hash(ldexp(Float64(num),pow))
         end
     end
     h = hash_integer(den, h)
@@ -152,51 +166,16 @@ end
 
 ## hashing Float16s ##
 
-hash(x::Float16, h::Uint) = hash(float64(x), h)
+hash(x::Float16, h::UInt) = hash(Float64(x), h)
 
-## hashing collections ##
+## hashing strings ##
 
-function hash(a::AbstractArray, h::Uint)
-    h += uint(0x7f53e68ceb575e76)
-    h += hash(size(a))
-    for x in a
-        h = hash(x, h)
-    end
-    return h
+const memhash = UInt === UInt64 ? :memhash_seed : :memhash32_seed
+const memhash_seed = UInt === UInt64 ? 0x71e729fd56419c81 : 0x56419c81
+
+function hash(s::Union{String,SubString{String}}, h::UInt)
+    h += memhash_seed
+    # note: use pointer(s) here (see #6058).
+    ccall(memhash, UInt, (Ptr{UInt8}, Csize_t, UInt32), pointer(s), sizeof(s), h % UInt32) + h
 end
-
-function hash(a::Associative, h::Uint)
-    h += uint(0x6d35bb51952d5539)
-    for (k,v) in a
-        h $= hash(k, hash(v))
-    end
-    return h
-end
-
-function hash(s::Set, h::Uint)
-    h += uint(0x852ada37cfe8e0ce)
-    for x in s
-        h $= hash(x)
-    end
-    return h
-end
-
-function hash(s::IntSet, h::Uint)
-    h += uint(0x88989f1fc7dea67d)
-    h += hash(s.fill1s)
-    filln = s.fill1s ? uint32(-1) : uint32(0)
-    for x in s.bits
-        if x != filln
-            h = hash(x, h)
-        end
-    end
-    return h
-end
-
-# hashing ranges by component at worst leads to collisions for very similar ranges
-function hash(r::Range, h::Uint)
-    h += uint(0x80707b6821b70087)
-    h = hash(first(r), h)
-    h = hash(step(r), h)
-    h = hash(last(r), h)
-end
+hash(s::AbstractString, h::UInt) = hash(String(s), h)

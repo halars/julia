@@ -1,5 +1,7 @@
-#ifndef ARRAYLIST_H
-#define ARRAYLIST_H
+// This file is a part of Julia. License is MIT: https://julialang.org/license
+
+#ifndef JL_ARRAYLIST_H
+#define JL_ARRAYLIST_H
 
 #define AL_N_INLINE 29
 
@@ -19,6 +21,7 @@ void arraylist_free(arraylist_t *a);
 
 void arraylist_push(arraylist_t *a, void *elt);
 void *arraylist_pop(arraylist_t *a);
+void arraylist_grow(arraylist_t *a, size_t n);
 
 #ifdef __cplusplus
 }

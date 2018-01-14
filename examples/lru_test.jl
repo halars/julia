@@ -1,14 +1,16 @@
-using LRUExample
+# This file is a part of Julia. License is MIT: https://julialang.org/license
 
-TestLRU = LRUExample.UnboundedLRU{ASCIIString, ASCIIString}()
-TestBLRU = LRUExample.BoundedLRU{ASCIIString, ASCIIString}(1000)
+using .LRUExample
 
-get_str(i) = ascii(vcat(map(x->[x>>4; x&0x0F], reinterpret(Uint8, [int32(i)]))...))
+TestLRU = LRUExample.UnboundedLRU{String, String}()
+TestBLRU = LRUExample.BoundedLRU{String, String}(1000)
 
-isbounded{L<:LRUExample.LRU}(::Type{L}) = any(map(n->n==:maxsize, L.names))
-isbounded{L<:LRUExample.LRU}(l::L) = isbounded(L)
+get_str(i) = String(vcat(map(x->[x>>4; x&0x0F], reinterpret(UInt8, [Int32(i)]))...))
 
-nmax = int(logspace(2, 5, 4))
+isbounded(::Type{L}) where {L<:LRUExample.LRU} = any(map(n->n==:maxsize, fieldnames(L)))
+isbounded(l::L) where {L<:LRUExample.LRU} = isbounded(L)
+
+nmax = round.(Int, logspace(2, 5, 4))
 
 function lrutest()
     #println("LRU consistency tests")

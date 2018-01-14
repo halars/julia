@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 module MaxSum
 
 include("fieldvalue.jl")
@@ -8,12 +10,12 @@ export UnsatError, Graph, Messages, maxsum
 
 # An exception type used internally to signal that an unsatisfiable
 # constraint was detected
-type UnsatError <: Exception
+struct UnsatError <: Exception
     info
 end
 
 # Some parameters to drive the decimation process
-type MaxSumParams
+mutable struct MaxSumParams
     nondec_iterations # number of initial iterations before starting
                       # decimation
     dec_interval # number of iterations between decimations
@@ -21,9 +23,9 @@ type MaxSumParams
                  # step
 
     function MaxSumParams()
-        accuracy = int(get(ENV, "JULIA_PKGRESOLVE_ACCURACY", 1))
+        accuracy = parse(Int, get(ENV, "JULIA_PKGRESOLVE_ACCURACY", "1"))
         if accuracy <= 0
-            error("JULIA_PKGRESOLVE_ACCURACY must be >= 1")
+            error("JULIA_PKGRESOLVE_ACCURACY must be > 0")
         end
         nondec_iterations = accuracy * 20
         dec_interval = accuracy * 10
@@ -34,7 +36,7 @@ end
 
 # Graph holds the graph structure onto which max-sum is run, in
 # sparse format
-type Graph
+mutable struct Graph
     # adjacency matrix:
     #   for each package, has the list of neighbors
     #   indices (both dependencies and dependants)
@@ -63,8 +65,9 @@ type Graph
     gdir::Vector{Vector{Int}}
 
     # adjacency dict:
-    #   allows to retrieve the indices in gadj, so that
+    #   allows one to retrieve the indices in gadj, so that
     #   gadj[p0][adjdict[p1][p0]] = p1
+    #   ("At which index does package p1 appear in gadj[p0]?")
     adjdict::Vector{Dict{Int,Int}}
 
     # states per package: same as in Interface
@@ -77,7 +80,6 @@ type Graph
     np::Int
 
     function Graph(interface::Interface)
-
         deps = interface.deps
         np = interface.np
 
@@ -86,10 +88,10 @@ type Graph
         pvers = interface.pvers
         vdict = interface.vdict
 
-        gadj = [ Int[] for i = 1:np ]
-        gmsk = [ BitMatrix[] for i = 1:np ]
-        gdir = [ Int[] for i = 1:np ]
-        adjdict = [ (Int=>Int)[] for i = 1:np ]
+        gadj = [Int[] for i = 1:np]
+        gmsk = [BitMatrix[] for i = 1:np]
+        gdir = [Int[] for i = 1:np]
+        adjdict = [Dict{Int,Int}() for i = 1:np]
 
         for (p,d) in deps
             p0 = pdict[p]
@@ -120,7 +122,7 @@ type Graph
                         adjdict[p0][p1] = j1
 
                         bm = trues(spp[p1], spp[p0])
-                        bmt = bm'
+                        bmt = trues(spp[p0], spp[p1])
 
                         push!(gmsk[p0], bm)
                         push!(gmsk[p1], bmt)
@@ -137,7 +139,7 @@ type Graph
                     end
 
                     for v1 = 1:length(pvers[p1])
-                        if !in(pvers[p1][v1], rvs)
+                        if pvers[p1][v1] ∉ rvs
                             bm[v1, v0] = false
                             bmt[v0, v1] = false
                         end
@@ -148,7 +150,7 @@ type Graph
             end
         end
 
-        perm = [1:np]
+        perm = [1:np;]
 
         return new(gadj, gmsk, gdir, adjdict, spp, perm, np)
     end
@@ -157,7 +159,7 @@ end
 # Messages has the cavity messages and the total fields, and
 # gets updated iteratively (and occasionally decimated) until
 # convergence
-type Messages
+mutable struct Messages
     # cavity incoming messages: for each package p0,
     #                           for each neighbor p1 of p0,
     #                           msg[p0][p1] is a vector of length spp[p0]
@@ -169,12 +171,14 @@ type Messages
     #                 fields are not normalized
     fld::Vector{Field}
 
+    # backup of the initial value of fld, to be used when resetting
+    initial_fld::Vector{Field}
+
     # keep track of which variables have been decimated
     decimated::BitVector
     num_nondecimated::Int
 
     function Messages(interface::Interface, graph::Graph)
-
         reqs = interface.reqs
         pkgs = interface.pkgs
         np = interface.np
@@ -186,12 +190,12 @@ type Messages
         # a "deterministic noise" function based on hashes
         function noise(p0::Int, v0::Int)
             s = pkgs[p0] * string(v0 == spp[p0] ? "UNINST" : pvers[p0][v0])
-            int128(hash(s))
+            Int128(hash(s))
         end
 
         # external fields: there are 2 terms, a noise to break potential symmetries
         #                  and one to favor newest versions over older, and no-version over all
-        fld = [ [ FieldValue(0,zero(VersionWeight),vweight[p0][v0],0,noise(p0,v0)) for v0 = 1:spp[p0] ] for p0 = 1:np]
+        fld = [[FieldValue(0, zero(VersionWeight), vweight[p0][v0], (v0==spp[p0]), 0, noise(p0,v0)) for v0 = 1:spp[p0]] for p0 = 1:np]
 
         # enforce requirements
         for (rp, rvs) in reqs
@@ -207,7 +211,7 @@ type Messages
                     # the state is one of those explicitly requested:
                     # favor it at a higer level than normal (upgrade
                     # FieldValue from l2 to l1)
-                    fld0[v0] += FieldValue(0,vweight[p0][v0],-vweight[p0][v0])
+                    fld0[v0] += FieldValue(0, vweight[p0][v0], -vweight[p0][v0])
                 end
             end
             # the uninstalled state is forbidden by requirements
@@ -221,11 +225,13 @@ type Messages
             end
         end
 
+        initial_fld = deepcopy(fld)
+
         # initialize cavity messages to 0
         gadj = graph.gadj
-        msg = [ [ zeros(FieldValue,spp[p0]) for p1 = 1:length(gadj[p0])] for p0 = 1:np]
+        msg = [[zeros(FieldValue, spp[p0]) for p1 = 1:length(gadj[p0])] for p0 = 1:np]
 
-        return new(msg, fld, falses(np), np)
+        return new(msg, fld, initial_fld, falses(np), np)
     end
 end
 
@@ -235,7 +241,7 @@ function getsolution(msgs::Messages)
 
     fld = msgs.fld
     np = length(fld)
-    sol = Array(Int, np)
+    sol = Vector{Int}(uninitialized, np)
     for p0 = 1:np
         fld0 = fld[p0]
         s0 = indmax(fld0)
@@ -251,7 +257,6 @@ end
 # for a given node p0 (i.e. a package) updates all
 # input cavity messages and fields of its neighbors
 function update(p0::Int, graph::Graph, msgs::Messages)
-
     gadj = graph.gadj
     gmsk = graph.gmsk
     gdir = graph.gdir
@@ -274,9 +279,7 @@ function update(p0::Int, graph::Graph, msgs::Messages)
     for j0 in 1:length(gadj0)
 
         p1 = gadj0[j0]
-        if decimated[p1]
-            continue
-        end
+        decimated[p1] && continue
         j1 = adjdict0[p1]
         #@assert j0 == adjdict[p1][p0]
         bm1 = gmsk[p1][j1]
@@ -290,7 +293,7 @@ function update(p0::Int, graph::Graph, msgs::Messages)
         if dir1 == -1
             # p0 depends on p1
             for v0 = 1:spp0-1
-                cavmsg[v0] += FieldValue(0,VersionWeight(0),VersionWeight(0),v0)
+                cavmsg[v0] += FieldValue(0, VersionWeight(0), VersionWeight(0), 0, v0)
             end
         end
 
@@ -298,12 +301,12 @@ function update(p0::Int, graph::Graph, msgs::Messages)
         oldmsg = msg1[j1]
 
         # init the new message to minus infinity
-        newmsg = [ FieldValue(-1) for v1 = 1:spp1 ]
+        newmsg = [FieldValue(-1) for v1 = 1:spp1]
 
         # compute the new message by passing cavmsg
         # through the constraint encoded in the bitmask
         # (nearly equivalent to:
-        #    newmsg = [ maximum(cavmsg[bm1[:,v1]]) for v1 = 1:spp1 ]
+        #    newmsg = [maximum(cavmsg[bm1[:,v1]]) for v1 = 1:spp1]
         #  except for the gnrg term)
         m = FieldValue(-1)
         for v1 = 1:spp1
@@ -314,7 +317,7 @@ function update(p0::Int, graph::Graph, msgs::Messages)
             end
             if dir1 == 1 && v1 != spp1
                 # p1 depends on p0
-                newmsg[v1] += FieldValue(0,VersionWeight(0),VersionWeight(0),v1)
+                newmsg[v1] += FieldValue(0, VersionWeight(0), VersionWeight(0), 0, v1)
             end
             m = max(m, newmsg[v1])
         end
@@ -330,7 +333,7 @@ function update(p0::Int, graph::Graph, msgs::Messages)
         end
 
         diff = newmsg - oldmsg
-        maxdiff = max(maxdiff, maximum(abs(diff)))
+        maxdiff = max(maxdiff, maximum(abs.(diff)))
 
         # update the field of p1
         fld1 = fld[p1]
@@ -364,7 +367,6 @@ end
 # Call update for all nodes (i.e. packages) in
 # random order
 function iterate(graph::Graph, msgs::Messages)
-
     np = graph.np
 
     maxdiff = zero(FieldValue)
@@ -378,18 +380,44 @@ function iterate(graph::Graph, msgs::Messages)
 end
 
 function decimate1(p0::Int, graph::Graph, msgs::Messages)
-    @assert !msgs.decimated[p0]
-    fld0 = msgs.fld[p0]
+    decimated = msgs.decimated
+    fld = msgs.fld
+    adjdict = graph.adjdict
+    gmsk = graph.gmsk
+
+    @assert !decimated[p0]
+    fld0 = fld[p0]
     s0 = indmax(fld0)
-    #println("DECIMATING $p0 ($(packages()[p0]) s0=$s0)")
-    for v0 = 1:length(fld0)
-        if v0 != s0
-            fld0[v0] -= FieldValue(1)
-        end
+    # only do the decimation if it is consistent with
+    # the previously decimated nodes
+    for p1 in find(decimated)
+        haskey(adjdict[p0], p1) || continue
+        s1 = indmax(fld[p1])
+        j1 = adjdict[p0][p1]
+        gmsk[p1][j1][s0,s1] || return false
     end
-    update(p0, graph, msgs)
+    #println("DECIMATING $p0 (s0=$s0 fld=$fld0)")
+    for v0 = 1:length(fld0)
+        v0 == s0 && continue
+        fld0[v0] = FieldValue(-1)
+    end
     msgs.decimated[p0] = true
     msgs.num_nondecimated -= 1
+    return true
+end
+
+function reset_messages!(msgs::Messages)
+    msg = msgs.msg
+    fld = msgs.fld
+    initial_fld = msgs.initial_fld
+    decimated = msgs.decimated
+    np = length(fld)
+    for p0 = 1:np
+        map(m->fill!(m, zero(FieldValue)), msg[p0])
+        decimated[p0] && continue
+        fld[p0] = copy(initial_fld[p0])
+    end
+    return msgs
 end
 
 # If normal convergence fails (or is too slow) fix the most
@@ -397,20 +425,36 @@ end
 # but the maximum
 function decimate(n::Int, graph::Graph, msgs::Messages)
     #println("DECIMATING $n NODES")
+    adjdict = graph.adjdict
     fld = msgs.fld
     decimated = msgs.decimated
     fldorder = sortperm(fld, by=secondmax)
+    did_dec = false
     for p0 in fldorder
-        if decimated[p0]
-            continue
-        end
-        decimate1(p0, graph, msgs)
+        decimated[p0] && continue
+        did_dec |= decimate1(p0, graph, msgs)
         n -= 1
-        if n == 0
-            break
-        end
+        n == 0 && break
     end
     @assert n == 0
+    if !did_dec
+        # did not succeed in decimating anything;
+        # try to decimate at least one node
+        for p0 in fldorder
+            decimated[p0] && continue
+            if decimate1(p0, graph, msgs)
+                did_dec = true
+                break
+            end
+        end
+    end
+    if !did_dec
+        # still didn't succeed, give up
+        p0 = first(fldorder[.~(decimated)])
+        throw(UnsatError(p0))
+    end
+
+    reset_messages!(msgs)
     return
 end
 
@@ -418,6 +462,7 @@ end
 # keep converging
 function break_ties(msgs::Messages)
     fld = msgs.fld
+    unbroken_ties = Int[]
     for p0 = 1:length(fld)
         fld0 = fld[p0]
         z = 0
@@ -432,17 +477,18 @@ function break_ties(msgs::Messages)
         end
         if z > 1
             #println("TIE! p0=$p0")
-            decimate1(p0, msgs)
-            return false
+            decimate1(p0, msgs) && return false
+            push!(unbroken_ties, p0)
         end
     end
+    # If there were ties, but none were broken, bail out
+    isempty(unbroken_ties) || throw(PkgError(first(unbroken_ties)))
     return true
 end
 
 # Iterative solver: run iterate() until convergence
 # (occasionally calling decimate())
 function maxsum(graph::Graph, msgs::Messages)
-
     params = MaxSumParams()
 
     it = 0
@@ -453,19 +499,14 @@ function maxsum(graph::Graph, msgs::Messages)
         #println("it = $it maxdiff = $maxdiff")
 
         if maxdiff == zero(FieldValue)
-            if break_ties(msgs)
-                break
-            else
-                continue
-            end
+            break_ties(msgs) && break
+            continue
         end
         if it >= params.nondec_iterations &&
            (it - params.nondec_iterations) % params.dec_interval == 0
-            numdec = clamp(ifloor(params.dec_fraction * graph.np),  1, msgs.num_nondecimated)
+            numdec = clamp(floor(Int, params.dec_fraction * graph.np), 1, msgs.num_nondecimated)
             decimate(numdec, graph, msgs)
-            if msgs.num_nondecimated == 0
-                break
-            end
+            msgs.num_nondecimated == 0 && break
         end
     end
 
