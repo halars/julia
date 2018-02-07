@@ -41,13 +41,14 @@ Fully implemented by:
   * `Number`
   * [`AbstractArray`](@ref)
   * [`BitSet`](@ref)
-  * [`ObjectIdDict`](@ref)
+  * [`IdDict`](@ref)
   * [`Dict`](@ref)
   * [`WeakKeyDict`](@ref)
   * `EachLine`
   * `AbstractString`
   * [`Set`](@ref)
   * [`Pair`](@ref)
+  * [`NamedTuple`](@ref)
 
 ## General Collections
 
@@ -65,11 +66,12 @@ Fully implemented by:
   * `Number`
   * [`AbstractArray`](@ref)
   * [`BitSet`](@ref)
-  * [`ObjectIdDict`](@ref)
+  * [`IdDict`](@ref)
   * [`Dict`](@ref)
   * [`WeakKeyDict`](@ref)
   * `AbstractString`
   * [`Set`](@ref)
+  * [`NamedTuple`](@ref)
 
 ## Iterable Collections
 
@@ -94,8 +96,8 @@ Base.minimum(::Any, ::Any)
 Base.minimum!
 Base.extrema(::Any)
 Base.extrema(::AbstractArray, ::Any)
-Base.indmax
-Base.indmin
+Base.argmax
+Base.argmin
 Base.findmax(::Any)
 Base.findmax(::AbstractArray, ::Any)
 Base.findmin(::Any)
@@ -143,7 +145,8 @@ Base.replace!
 ```@docs
 Base.getindex
 Base.setindex!
-Base.endof
+Base.firstindex
+Base.lastindex
 ```
 
 Fully implemented by:
@@ -160,8 +163,9 @@ Partially implemented by:
   * `Tuple`
   * `AbstractString`
   * [`Dict`](@ref)
-  * [`ObjectIdDict`](@ref)
+  * [`IdDict`](@ref)
   * [`WeakKeyDict`](@ref)
+  * [`NamedTuple`](@ref)
 
 ## Dictionaries
 
@@ -169,7 +173,7 @@ Partially implemented by:
 as the hashing function for the key, and [`isequal`](@ref) to determine equality. Define these
 two functions for custom types to override how they are stored in a hash table.
 
-[`ObjectIdDict`](@ref) is a special hash table where the keys are always object identities.
+[`IdDict`](@ref) is a special hash table where the keys are always object identities.
 
 [`WeakKeyDict`](@ref) is a hash table implementation where the keys are weak references to objects, and
 thus may be garbage collected even when referenced in a hash table.
@@ -188,7 +192,7 @@ for the key `x`).  Multiple arguments to `D[...]` are converted to tuples; for e
 
 ```@docs
 Base.Dict
-Base.ObjectIdDict
+Base.IdDict
 Base.WeakKeyDict
 Base.ImmutableDict
 Base.haskey
@@ -212,7 +216,7 @@ Base.valtype
 
 Fully implemented by:
 
-  * [`ObjectIdDict`](@ref)
+  * [`IdDict`](@ref)
   * [`Dict`](@ref)
   * [`WeakKeyDict`](@ref)
 
@@ -224,7 +228,7 @@ Partially implemented by:
   * [`Array`](@ref)
   * [`BitArray`](@ref)
   * [`ImmutableDict`](@ref Base.ImmutableDict)
-  * [`Iterators.IndexValue`](@ref)
+  * [`Iterators.Pairs`](@ref)
 
 ## Set-Like Collections
 
@@ -275,5 +279,5 @@ Fully implemented by:
 
 ```@docs
 Base.Pair
-Iterators.IndexValue
+Iterators.Pairs
 ```

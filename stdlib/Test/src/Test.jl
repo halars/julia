@@ -18,6 +18,7 @@ module Test
 export @test, @test_throws, @test_broken, @test_skip,
     @test_warn, @test_nowarn,
     @test_logs, @test_deprecated
+
 export @testset
 # Legacy approximate testing functions, yet to be included
 export @inferred
@@ -26,6 +27,9 @@ export GenericString, GenericSet, GenericDict, GenericArray
 export guardsrand, TestSetException
 
 import Distributed: myid
+
+using Random: srand, AbstractRNG, GLOBAL_RNG
+using InteractiveUtils: gen_call_with_extracted_types
 
 #-----------------------------------------------------------------------
 
@@ -67,7 +71,7 @@ struct Pass <: Result
     value
 end
 function Base.show(io::IO, t::Pass)
-    print_with_color(:green, io, "Test Passed"; bold = true)
+    printstyled(io, "Test Passed"; bold = true, color=:green)
     if !(t.orig_expr === nothing)
         print(io, "\n  Expression: ", t.orig_expr)
     end
@@ -95,9 +99,9 @@ mutable struct Fail <: Result
     source::LineNumberNode
 end
 function Base.show(io::IO, t::Fail)
-    print_with_color(Base.error_color(), io, "Test Failed"; bold = true)
+    printstyled(io, "Test Failed"; bold=true, color=Base.error_color())
     print(io, " at ")
-    print_with_color(:default, io, t.source.file, ":", t.source.line, "\n"; bold = true)
+    printstyled(io, t.source.file, ":", t.source.line, "\n"; bold=true, color=:default)
     print(io, "  Expression: ", t.orig_expr)
     if t.test_type == :test_throws_wrong
         # An exception was thrown, but it was of the wrong type
@@ -131,12 +135,12 @@ mutable struct Error <: Result
 end
 function Base.show(io::IO, t::Error)
     if t.test_type == :test_interrupted
-        print_with_color(Base.error_color(), io, "Interrupted")
+        printstyled(io, "Interrupted", color=Base.error_color())
         return
     end
-    print_with_color(Base.error_color(), io, "Error During Test"; bold = true)
+    printstyled(io, "Error During Test"; bold=true, color=Base.error_color())
     print(io, " at ")
-    print_with_color(:default, io, t.source.file, ":", t.source.line, "\n"; bold = true)
+    printstyled(io, t.source.file, ":", t.source.line, "\n"; bold=true, color=:default)
     if t.test_type == :test_nonbool
         println(io, "  Expression evaluated to non-Boolean")
         println(io, "  Expression: ", t.orig_expr)
@@ -174,7 +178,7 @@ mutable struct Broken <: Result
     orig_expr
 end
 function Base.show(io::IO, t::Broken)
-    print_with_color(Base.warn_color(), io, "Test Broken\n"; bold = true)
+    printstyled(io, "Test Broken\n"; bold=true, color=Base.warn_color())
     if t.test_type == :skipped && !(t.orig_expr === nothing)
         println(io, "  Skipped: ", t.orig_expr)
     elseif !(t.orig_expr === nothing)
@@ -612,7 +616,7 @@ function Base.show(io::IO, ex::TestSetException)
 end
 
 function Base.showerror(io::IO, ex::TestSetException, bt; backtrace=true)
-    print_with_color(Base.error_color(), io, string(ex))
+    printstyled(io, string(ex), color=Base.error_color())
 end
 
 #-----------------------------------------------------------------------
@@ -630,7 +634,7 @@ struct FallbackTestSetException <: Exception
 end
 
 function Base.showerror(io::IO, ex::FallbackTestSetException, bt; backtrace=true)
-    print_with_color(Base.error_color(), io, ex.msg)
+    printstyled(io, ex.msg, color=Base.error_color())
 end
 
 # Records nothing, and throws an error immediately whenever a Fail or
@@ -669,7 +673,7 @@ record(ts::DefaultTestSet, t::Pass) = (ts.n_passed += 1; t)
 # but do not terminate. Print a backtrace.
 function record(ts::DefaultTestSet, t::Union{Fail, Error})
     if myid() == 1
-        print_with_color(:white, ts.description, ": ")
+        printstyled(ts.description, ": ", color=:white)
         # don't print for interrupted tests
         if !(t isa Error) || t.test_type != :test_interrupted
             print(t)
@@ -728,21 +732,21 @@ function print_test_results(ts::DefaultTestSet, depth_pad=0)
     align = max(get_alignment(ts, 0), length("Test Summary:"))
     # Print the outer test set header once
     pad = total == 0 ? "" : " "
-    print_with_color(:white, rpad("Test Summary:",align," "), " |", pad; bold = true)
+    printstyled(rpad("Test Summary:", align, " "), " |", pad; bold=true, color=:white)
     if pass_width > 0
-        print_with_color(:green, lpad("Pass",pass_width," "), "  "; bold = true)
+        printstyled(lpad("Pass", pass_width, " "), "  "; bold=true, color=:green)
     end
     if fail_width > 0
-        print_with_color(Base.error_color(), lpad("Fail",fail_width," "), "  "; bold = true)
+        printstyled(lpad("Fail", fail_width, " "), "  "; bold=true, color=Base.error_color())
     end
     if error_width > 0
-        print_with_color(Base.error_color(), lpad("Error",error_width," "), "  "; bold = true)
+        printstyled(lpad("Error", error_width, " "), "  "; bold=true, color=Base.error_color())
     end
     if broken_width > 0
-        print_with_color(Base.warn_color(), lpad("Broken",broken_width," "), "  "; bold = true)
+        printstyled(lpad("Broken", broken_width, " "), "  "; bold=true, color=Base.warn_color())
     end
     if total_width > 0
-        print_with_color(Base.info_color(), lpad("Total",total_width, " "); bold = true)
+        printstyled(lpad("Total", total_width, " "); bold=true, color=Base.info_color())
     end
     println()
     # Recursively print a summary at every level
@@ -852,7 +856,7 @@ function print_counts(ts::DefaultTestSet, depth, align,
 
     np = passes + c_passes
     if np > 0
-        print_with_color(:green, lpad(string(np), pass_width, " "), "  ")
+        printstyled(lpad(string(np), pass_width, " "), "  ", color=:green)
     elseif pass_width > 0
         # No passes at this level, but some at another level
         print(lpad(" ", pass_width), "  ")
@@ -860,7 +864,7 @@ function print_counts(ts::DefaultTestSet, depth, align,
 
     nf = fails + c_fails
     if nf > 0
-        print_with_color(Base.error_color(), lpad(string(nf), fail_width, " "), "  ")
+        printstyled(lpad(string(nf), fail_width, " "), "  ", color=Base.error_color())
     elseif fail_width > 0
         # No fails at this level, but some at another level
         print(lpad(" ", fail_width), "  ")
@@ -868,7 +872,7 @@ function print_counts(ts::DefaultTestSet, depth, align,
 
     ne = errors + c_errors
     if ne > 0
-        print_with_color(Base.error_color(), lpad(string(ne), error_width, " "), "  ")
+        printstyled(lpad(string(ne), error_width, " "), "  ", color=Base.error_color())
     elseif error_width > 0
         # No errors at this level, but some at another level
         print(lpad(" ", error_width), "  ")
@@ -876,16 +880,16 @@ function print_counts(ts::DefaultTestSet, depth, align,
 
     nb = broken + c_broken
     if nb > 0
-        print_with_color(Base.warn_color(), lpad(string(nb), broken_width, " "), "  ")
+        printstyled(lpad(string(nb), broken_width, " "), "  ", color=Base.warn_color())
     elseif broken_width > 0
         # None broken at this level, but some at another level
         print(lpad(" ", broken_width), "  ")
     end
 
     if np == 0 && nf == 0 && ne == 0 && nb == 0
-        print_with_color(Base.info_color(), "No tests")
+        printstyled("No tests", color=Base.info_color())
     else
-        print_with_color(Base.info_color(), lpad(string(subtotal), total_width, " "))
+        printstyled(lpad(string(subtotal), total_width, " "), color=Base.info_color())
     end
     println()
 
@@ -997,17 +1001,17 @@ function testset_beginend(args, tests, source)
         # we reproduce the logic of guardsrand, but this function
         # cannot be used as it changes slightly the semantic of @testset,
         # by wrapping the body in a function
-        oldrng = copy(Base.GLOBAL_RNG)
+        oldrng = copy(GLOBAL_RNG)
         try
             # GLOBAL_RNG is re-seeded with its own seed to ease reproduce a failed test
-            srand(Base.GLOBAL_RNG.seed)
+            srand(GLOBAL_RNG.seed)
             $(esc(tests))
         catch err
             # something in the test block threw an error. Count that as an
             # error in this test set
             record(ts, Error(:nontest_error, :(), err, catch_backtrace(), $(QuoteNode(source))))
         finally
-            copy!(Base.GLOBAL_RNG, oldrng)
+            copy!(GLOBAL_RNG, oldrng)
         end
         pop_testset()
         finish(ts)
@@ -1066,7 +1070,7 @@ function testset_forloop(args, testloop, source)
             pop_testset()
             push!(arr, finish(ts))
             # it's 1000 times faster to copy from tmprng rather than calling srand
-            copy!(Base.GLOBAL_RNG, tmprng)
+            copy!(GLOBAL_RNG, tmprng)
 
         end
         ts = $(testsettype)($desc; $options...)
@@ -1084,9 +1088,9 @@ function testset_forloop(args, testloop, source)
         arr = Vector{Any}()
         local first_iteration = true
         local ts
-        local oldrng = copy(Base.GLOBAL_RNG)
-        srand(Base.GLOBAL_RNG.seed)
-        local tmprng = copy(Base.GLOBAL_RNG)
+        local oldrng = copy(GLOBAL_RNG)
+        srand(GLOBAL_RNG.seed)
+        local tmprng = copy(GLOBAL_RNG)
         try
             $(Expr(:for, Expr(:block, [esc(v) for v in loopvars]...), blk))
         finally
@@ -1095,7 +1099,7 @@ function testset_forloop(args, testloop, source)
                 pop_testset()
                 push!(arr, finish(ts))
             end
-            copy!(Base.GLOBAL_RNG, oldrng)
+            copy!(GLOBAL_RNG, oldrng)
         end
         arr
     end
@@ -1234,7 +1238,7 @@ macro inferred(ex)
                 kwargs = gensym()
                 quote
                     $(esc(args)), $(esc(kwargs)), result = $(esc(Expr(:call, _args_and_call, ex.args[2:end]..., ex.args[1])))
-                    inftypes = $(Base.gen_call_with_extracted_types(__module__, Base.return_types, :($(ex.args[1])($(args)...; $(kwargs)...))))
+                    inftypes = $(gen_call_with_extracted_types(__module__, Base.return_types, :($(ex.args[1])($(args)...; $(kwargs)...))))
                 end
             else
                 # No keywords
@@ -1250,32 +1254,6 @@ macro inferred(ex)
             result
         end
     end)
-end
-
-# Test approximate equality of vectors or columns of matrices modulo floating
-# point roundoff and phase (sign) differences.
-#
-# This function is designed to test for equality between vectors of floating point
-# numbers when the vectors are defined only up to a global phase or sign, such as
-# normalized eigenvectors or singular vectors. The global phase is usually
-# defined consistently, but may occasionally change due to small differences in
-# floating point rounding noise or rounding modes, or through the use of
-# different conventions in different algorithms. As a result, most tests checking
-# such vectors have to detect and discard such overall phase differences.
-#
-# Inputs:
-#     a, b:: StridedVecOrMat to be compared
-#     err :: Default: m^3*(eps(S)+eps(T)), where m is the number of rows
-#
-# Raises an error if any columnwise vector norm exceeds err. Otherwise, returns
-# nothing.
-function test_approx_eq_modphase(a::StridedVecOrMat{S}, b::StridedVecOrMat{T},
-                                 err = length(axes(a,1))^3*(eps(S)+eps(T))) where {S<:Real,T<:Real}
-    @test axes(a,1) == axes(b,1) && axes(a,2) == axes(b,2)
-    for i in axes(a,2)
-        v1, v2 = a[:, i], b[:, i]
-        @test min(abs(norm(v1-v2)),abs(norm(v1+v2))) ≈ 0.0 atol=err
-    end
 end
 
 """
@@ -1304,14 +1282,14 @@ function detect_ambiguities(mods...;
     end
     ambs = Set{Tuple{Method,Method}}()
     for mod in mods
-        for n in names(mod, true, imported)
+        for n in names(mod, all = true, imported = imported)
             Base.isdeprecated(mod, n) && continue
             if !isdefined(mod, n)
                 println("Skipping ", mod, '.', n)  # typically stale exports
                 continue
             end
             f = Base.unwrap_unionall(getfield(mod, n))
-            if recursive && isa(f, Module) && f !== mod && module_parent(f) === mod && module_name(f) === n
+            if recursive && isa(f, Module) && f !== mod && parentmodule(f) === mod && nameof(f) === n
                 subambs = detect_ambiguities(f,
                     imported=imported, recursive=recursive, ambiguous_bottom=ambiguous_bottom)
                 union!(ambs, subambs)
@@ -1345,14 +1323,14 @@ function detect_unbound_args(mods...;
                              recursive::Bool = false)
     ambs = Set{Method}()
     for mod in mods
-        for n in names(mod, true, imported)
+        for n in names(mod, all = true, imported = imported)
             Base.isdeprecated(mod, n) && continue
             if !isdefined(mod, n)
                 println("Skipping ", mod, '.', n)  # typically stale exports
                 continue
             end
             f = Base.unwrap_unionall(getfield(mod, n))
-            if recursive && isa(f, Module) && module_parent(f) === mod && module_name(f) === n
+            if recursive && isa(f, Module) && parentmodule(f) === mod && nameof(f) === n
                 subambs = detect_unbound_args(f, imported=imported, recursive=recursive)
                 union!(ambs, subambs)
             elseif isa(f, DataType) && isdefined(f.name, :mt)
@@ -1474,7 +1452,7 @@ for (G, A) in ((GenericSet, AbstractSet),
         Base.done(s::$G, state) = done(s.s, state)
         Base.next(s::$G, state) = next(s.s, state)
     end
-    for f in (:eltype, :isempty, :length, :start)
+    for f in (:isempty, :length, :start)
         @eval begin
             Base.$f(s::$G) = $f(s.s)
         end
@@ -1506,7 +1484,7 @@ Base.similar(A::GenericArray, s::Integer...) = GenericArray(similar(A.a, s...))
 
 "`guardsrand(f)` runs the function `f()` and then restores the
 state of the global RNG as it was before."
-function guardsrand(f::Function, r::AbstractRNG=Base.GLOBAL_RNG)
+function guardsrand(f::Function, r::AbstractRNG=GLOBAL_RNG)
     old = copy(r)
     try
         f()
@@ -1520,6 +1498,20 @@ then restoring the state of the global RNG as it was before."
 guardsrand(f::Function, seed::Union{Vector{UInt32},Integer}) = guardsrand() do
     srand(seed)
     f()
+end
+
+function _check_bitarray_consistency(B::BitArray{N}) where N
+    n = length(B)
+    if N ≠ 1
+        all(d ≥ 0 for d in B.dims) || (@warn("Negative d in dims: $(B.dims)"); return false)
+        prod(B.dims) ≠ n && (@warn("Inconsistent dims/len: prod(dims)=$(prod(B.dims)) len=$n"); return false)
+    end
+    Bc = B.chunks
+    nc = length(Bc)
+    nc == Base.num_bit_chunks(n) || (@warn("Incorrect chunks length for length $n: expected=$(Base.num_bit_chunks(n)) actual=$nc"); return false)
+    n == 0 && return true
+    Bc[end] & Base._msk_end(n) == Bc[end] || (@warn("Nonzero bits in chunk after `BitArray` end"); return false)
+    return true
 end
 
 # 0.7 deprecations

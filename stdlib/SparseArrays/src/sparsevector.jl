@@ -2,8 +2,8 @@
 
 ### Common definitions
 
-import Base: sort, find, findnz
-import Base.LinAlg: promote_to_array_type, promote_to_arrays_
+import Base: sort, findall
+import LinearAlgebra: promote_to_array_type, promote_to_arrays_
 
 ### The SparseVector
 
@@ -99,7 +99,7 @@ spzeros(len::Integer) = spzeros(Float64, len)
 spzeros(::Type{T}, len::Integer) where {T} = SparseVector(len, Int[], T[])
 spzeros(::Type{Tv}, ::Type{Ti}, len::Integer) where {Tv,Ti<:Integer} = SparseVector(len, Ti[], Tv[])
 
-LinAlg.fillstored!(x::SparseVector, y) = (fill!(x.nzval, y); x)
+LinearAlgebra.fillstored!(x::SparseVector, y) = (fill!(x.nzval, y); x)
 
 ### Construction from lists of indices and values
 
@@ -672,16 +672,16 @@ function getindex(A::SparseMatrixCSC{Tv,Ti}, I::AbstractVector) where {Tv,Ti}
     SparseVector(n, rowvalB, nzvalB)
 end
 
-function find(x::SparseVector)
+function findall(x::SparseVector)
     if !(eltype(x) <: Bool)
-        Base.depwarn("In the future `find(A)` will only work on boolean collections. Use `find(x->x!=0, A)` instead.", :find)
+        Base.depwarn("In the future `findall(A)` will only work on boolean collections. Use `findall(x->x!=0, A)` instead.", :findall)
     end
-    return find(x->x!=0, x)
+    return findall(x->x!=0, x)
 end
 
-function find(p::Function, x::SparseVector{<:Any,Ti}) where Ti
+function findall(p::Function, x::SparseVector{<:Any,Ti}) where Ti
     if p(zero(eltype(x)))
-        return invoke(find, Tuple{Function, Any}, p, x)
+        return invoke(findall, Tuple{Function, Any}, p, x)
     end
     numnz = nnz(x)
     I = Vector{Ti}(uninitialized, numnz)
@@ -704,8 +704,8 @@ function find(p::Function, x::SparseVector{<:Any,Ti}) where Ti
 
     return I
 end
-find(p::Base.OccursIn, x::SparseVector{<:Any,Ti}) where {Ti} =
-    invoke(find, Tuple{Base.OccursIn, AbstractArray}, p, x)
+findall(p::Base.OccursIn, x::SparseVector{<:Any,Ti}) where {Ti} =
+    invoke(findall, Tuple{Base.OccursIn, AbstractArray}, p, x)
 
 function findnz(x::SparseVector{Tv,Ti}) where {Tv,Ti}
     numnz = nnz(x)
@@ -716,19 +716,9 @@ function findnz(x::SparseVector{Tv,Ti}) where {Tv,Ti}
     nzind = x.nzind
     nzval = x.nzval
 
-    count = 1
     @inbounds for i = 1 : numnz
-        if nzval[i] != 0
-            I[count] = nzind[i]
-            V[count] = nzval[i]
-            count += 1
-        end
-    end
-
-    count -= 1
-    if numnz != count
-        deleteat!(I, (count+1):numnz)
-        deleteat!(V, (count+1):numnz)
+        I[i] = nzind[i]
+        V[i] = nzval[i]
     end
 
     return (I, V)
@@ -797,8 +787,8 @@ function getindex(x::AbstractSparseVector{Tv,Ti}, I::AbstractUnitRange) where {T
     SparseVector(length(I), rind, rval)
 end
 
-getindex(x::AbstractSparseVector, I::AbstractVector{Bool}) = x[find(I)]
-getindex(x::AbstractSparseVector, I::AbstractArray{Bool}) = x[find(I)]
+getindex(x::AbstractSparseVector, I::AbstractVector{Bool}) = x[findall(I)]
+getindex(x::AbstractSparseVector, I::AbstractArray{Bool}) = x[findall(I)]
 @inline function getindex(x::AbstractSparseVector{Tv,Ti}, I::AbstractVector) where {Tv,Ti}
     # SparseMatrixCSC has a nicely optimized routine for this; punt
     S = SparseMatrixCSC(x.n, 1, Ti[1,length(x.nzind)+1], x.nzind, x.nzval)
@@ -999,24 +989,24 @@ vcat(X::Union{Vector,SparseVector}...) = vcat(map(sparse, X)...)
 
 # TODO: A definition similar to the third exists in base/linalg/bidiag.jl. These definitions
 # should be consolidated in a more appropriate location, e.g. base/linalg/special.jl.
-const _SparseArrays = Union{SparseVector, SparseMatrixCSC, Base.LinAlg.RowVector{<:Any,<:SparseVector}, Adjoint{<:Any,<:SparseVector}, Transpose{<:Any,<:SparseVector}}
+const _SparseArrays = Union{SparseVector, SparseMatrixCSC, LinearAlgebra.RowVector{<:Any,<:SparseVector}, Adjoint{<:Any,<:SparseVector}, Transpose{<:Any,<:SparseVector}}
 const _SpecialArrays = Union{Diagonal, Bidiagonal, Tridiagonal, SymTridiagonal}
 const _SparseConcatArrays = Union{_SpecialArrays, _SparseArrays}
 
 const _Symmetric_SparseConcatArrays{T,A<:_SparseConcatArrays} = Symmetric{T,A}
 const _Hermitian_SparseConcatArrays{T,A<:_SparseConcatArrays} = Hermitian{T,A}
-const _Triangular_SparseConcatArrays{T,A<:_SparseConcatArrays} = Base.LinAlg.AbstractTriangular{T,A}
+const _Triangular_SparseConcatArrays{T,A<:_SparseConcatArrays} = LinearAlgebra.AbstractTriangular{T,A}
 const _Annotated_SparseConcatArrays = Union{_Triangular_SparseConcatArrays, _Symmetric_SparseConcatArrays, _Hermitian_SparseConcatArrays}
 
 const _Symmetric_DenseArrays{T,A<:Matrix} = Symmetric{T,A}
 const _Hermitian_DenseArrays{T,A<:Matrix} = Hermitian{T,A}
-const _Triangular_DenseArrays{T,A<:Matrix} = Base.LinAlg.AbstractTriangular{T,A}
+const _Triangular_DenseArrays{T,A<:Matrix} = LinearAlgebra.AbstractTriangular{T,A}
 const _Annotated_DenseArrays = Union{_Triangular_DenseArrays, _Symmetric_DenseArrays, _Hermitian_DenseArrays}
 const _Annotated_Typed_DenseArrays{T} = Union{_Triangular_DenseArrays{T}, _Symmetric_DenseArrays{T}, _Hermitian_DenseArrays{T}}
 
-const _SparseConcatGroup = Union{Vector, Adjoint{<:Any,<:Vector}, Transpose{<:Any,<:Vector}, Base.LinAlg.RowVector{<:Any,<:Vector}, Matrix, _SparseConcatArrays, _Annotated_SparseConcatArrays, _Annotated_DenseArrays}
-const _DenseConcatGroup = Union{Vector, Adjoint{<:Any,<:Vector}, Transpose{<:Any,<:Vector}, Base.LinAlg.RowVector{<:Any, <:Vector}, Matrix, _Annotated_DenseArrays}
-const _TypedDenseConcatGroup{T} = Union{Vector{T}, Adjoint{T,Vector{T}}, Transpose{T,Vector{T}}, Base.LinAlg.RowVector{T,Vector{T}}, Matrix{T}, _Annotated_Typed_DenseArrays{T}}
+const _SparseConcatGroup = Union{Vector, Adjoint{<:Any,<:Vector}, Transpose{<:Any,<:Vector}, LinearAlgebra.RowVector{<:Any,<:Vector}, Matrix, _SparseConcatArrays, _Annotated_SparseConcatArrays, _Annotated_DenseArrays}
+const _DenseConcatGroup = Union{Vector, Adjoint{<:Any,<:Vector}, Transpose{<:Any,<:Vector}, LinearAlgebra.RowVector{<:Any, <:Vector}, Matrix, _Annotated_DenseArrays}
+const _TypedDenseConcatGroup{T} = Union{Vector{T}, Adjoint{T,Vector{T}}, Transpose{T,Vector{T}}, LinearAlgebra.RowVector{T,Vector{T}}, Matrix{T}, _Annotated_Typed_DenseArrays{T}}
 
 # Concatenations involving un/annotated sparse/special matrices/vectors should yield sparse arrays
 function cat(catdims, Xin::_SparseConcatGroup...)
@@ -1451,7 +1441,7 @@ adjoint(sv::SparseVector) = Adjoint(sv)
 
 # axpy
 
-function LinAlg.axpy!(a::Number, x::SparseVectorUnion, y::AbstractVector)
+function LinearAlgebra.axpy!(a::Number, x::SparseVectorUnion, y::AbstractVector)
     length(x) == length(y) || throw(DimensionMismatch())
     nzind = nonzeroinds(x)
     nzval = nonzeros(x)
@@ -1480,12 +1470,24 @@ function LinAlg.axpy!(a::Number, x::SparseVectorUnion, y::AbstractVector)
 end
 
 
-# scale
+# scaling
 
-scale!(x::SparseVectorUnion, a::Real)    = (scale!(nonzeros(x), a); x)
-scale!(x::SparseVectorUnion, a::Complex) = (scale!(nonzeros(x), a); x)
-scale!(a::Real, x::SparseVectorUnion)    = (scale!(nonzeros(x), a); x)
-scale!(a::Complex, x::SparseVectorUnion) = (scale!(nonzeros(x), a); x)
+function rmul!(x::SparseVectorUnion, a::Real)
+    rmul!(nonzeros(x), a)
+    return x
+end
+function rmul!(x::SparseVectorUnion, a::Complex)
+    rmul!(nonzeros(x), a)
+    return x
+end
+function lmul!(a::Real, x::SparseVectorUnion)
+    rmul!(nonzeros(x), a)
+    return x
+end
+function lmul!(a::Complex, x::SparseVectorUnion)
+    rmul!(nonzeros(x), a)
+    return x
+end
 
 (*)(x::SparseVectorUnion, a::Number) = SparseVector(length(x), copy(nonzeroinds(x)), nonzeros(x) * a)
 (*)(a::Number, x::SparseVectorUnion) = SparseVector(length(x), copy(nonzeroinds(x)), a * nonzeros(x))
@@ -1556,7 +1558,7 @@ end
 ### BLAS-2 / dense A * sparse x -> dense y
 
 # lowrankupdate (BLAS.ger! like)
-function LinAlg.lowrankupdate!(A::StridedMatrix, x::AbstractVector, y::SparseVectorUnion, α::Number = 1)
+function LinearAlgebra.lowrankupdate!(A::StridedMatrix, x::AbstractVector, y::SparseVectorUnion, α::Number = 1)
     nzi = nonzeroinds(y)
     nzv = nonzeros(y)
     @inbounds for (j,v) in zip(nzi,nzv)
@@ -1586,7 +1588,7 @@ function mul!(α::Number, A::StridedMatrix, x::AbstractSparseVector, β::Number,
     length(x) == n && length(y) == m || throw(DimensionMismatch())
     m == 0 && return y
     if β != one(β)
-        β == zero(β) ? fill!(y, zero(eltype(y))) : scale!(y, β)
+        β == zero(β) ? fill!(y, zero(eltype(y))) : rmul!(y, β)
     end
     α == zero(α) && return y
 
@@ -1625,7 +1627,7 @@ function mul!(α::Number, transA::Transpose{<:Any,<:StridedMatrix}, x::AbstractS
     length(x) == m && length(y) == n || throw(DimensionMismatch())
     n == 0 && return y
     if β != one(β)
-        β == zero(β) ? fill!(y, zero(eltype(y))) : scale!(y, β)
+        β == zero(β) ? fill!(y, zero(eltype(y))) : rmul!(y, β)
     end
     α == zero(α) && return y
 
@@ -1683,7 +1685,7 @@ function mul!(α::Number, A::SparseMatrixCSC, x::AbstractSparseVector, β::Numbe
     length(x) == n && length(y) == m || throw(DimensionMismatch())
     m == 0 && return y
     if β != one(β)
-        β == zero(β) ? fill!(y, zero(eltype(y))) : scale!(y, β)
+        β == zero(β) ? fill!(y, zero(eltype(y))) : rmul!(y, β)
     end
     α == zero(α) && return y
 
@@ -1727,7 +1729,7 @@ function _At_or_Ac_mul_B!(tfun::Function,
     length(x) == m && length(y) == n || throw(DimensionMismatch())
     n == 0 && return y
     if β != one(β)
-        β == zero(β) ? fill!(y, zero(eltype(y))) : scale!(y, β)
+        β == zero(β) ? fill!(y, zero(eltype(y))) : rmul!(y, β)
     end
     α == zero(α) && return y
 
@@ -1803,7 +1805,7 @@ end
 for isunittri in (true, false), islowertri in (true, false)
     unitstr = isunittri ? "Unit" : ""
     halfstr = islowertri ? "Lower" : "Upper"
-    tritype = :(Base.LinAlg.$(Symbol(unitstr, halfstr, "Triangular")))
+    tritype = :(LinearAlgebra.$(Symbol(unitstr, halfstr, "Triangular")))
 
     # build out-of-place left-division operations
     for (istrans, applyxform, xformtype, xformop) in (
@@ -1819,7 +1821,7 @@ for isunittri in (true, false), islowertri in (true, false)
             TAb = $(isunittri ?
                 :(typeof(zero(TA)*zero(Tb) + zero(TA)*zero(Tb))) :
                 :(typeof((zero(TA)*zero(Tb) + zero(TA)*zero(Tb))/one(TA))) )
-            Base.LinAlg.ldiv!($xformop(convert(AbstractArray{TAb}, A)), convert(Array{TAb}, b))
+            LinearAlgebra.ldiv!($xformop(convert(AbstractArray{TAb}, A)), convert(Array{TAb}, b))
         end
 
         # faster method requiring good view support of the
@@ -1841,7 +1843,7 @@ for isunittri in (true, false), islowertri in (true, false)
                     :(1:b.nzind[end]) )
                 nzrangeviewr = view(r, nzrange)
                 nzrangeviewA = $tritype(view(A.data, nzrange, nzrange))
-                Base.LinAlg.ldiv!($xformop(convert(AbstractArray{TAb}, nzrangeviewA)), nzrangeviewr)
+                LinearAlgebra.ldiv!($xformop(convert(AbstractArray{TAb}, nzrangeviewA)), nzrangeviewr)
             end
             r
         end
@@ -1850,7 +1852,7 @@ for isunittri in (true, false), islowertri in (true, false)
         xformtritype = applyxform ? :($xformtype{<:Any,<:$tritype}) : :($tritype)
         @eval function \(xformA::$xformtritype, b::SparseVector)
             A = $(applyxform ? :(xformA.parent) : :(xformA) )
-            Base.LinAlg.ldiv!($xformop(A), copy(b))
+            LinearAlgebra.ldiv!($xformop(A), copy(b))
         end
     end
 
@@ -1884,7 +1886,7 @@ for isunittri in (true, false), islowertri in (true, false)
                     :(1:b.nzind[end]) )
                 nzrangeviewbnz = view(b.nzval, nzrange .- (b.nzind[1] - 1))
                 nzrangeviewA = $tritype(view(A.data, nzrange, nzrange))
-                Base.LinAlg.ldiv!($xformop(nzrangeviewA), nzrangeviewbnz)
+                LinearAlgebra.ldiv!($xformop(nzrangeviewA), nzrangeviewbnz)
             end
             b
         end
@@ -1982,10 +1984,10 @@ function fkeep!(x::SparseVector, f, trim::Bool = true)
     x
 end
 
-droptol!(x::SparseVector, tol, trim::Bool = true) = fkeep!(x, (i, x) -> abs(x) > tol, trim)
+droptol!(x::SparseVector, tol; trim::Bool = true) = fkeep!(x, (i, x) -> abs(x) > tol, trim)
 
 """
-    dropzeros!(x::SparseVector, trim::Bool = true)
+    dropzeros!(x::SparseVector; trim::Bool = true)
 
 Removes stored numerical zeros from `x`, optionally trimming resulting excess space from
 `x.nzind` and `x.nzval` when `trim` is `true`.
@@ -1993,9 +1995,10 @@ Removes stored numerical zeros from `x`, optionally trimming resulting excess sp
 For an out-of-place version, see [`dropzeros`](@ref). For
 algorithmic information, see `fkeep!`.
 """
-dropzeros!(x::SparseVector, trim::Bool = true) = fkeep!(x, (i, x) -> x != 0, trim)
+dropzeros!(x::SparseVector; trim::Bool = true) = fkeep!(x, (i, x) -> x != 0, trim)
+
 """
-    dropzeros(x::SparseVector, trim::Bool = true)
+    dropzeros(x::SparseVector; trim::Bool = true)
 
 Generates a copy of `x` and removes numerical zeros from that copy, optionally trimming
 excess space from the result's `nzind` and `nzval` arrays when `trim` is `true`.
@@ -2016,7 +2019,7 @@ julia> dropzeros(A)
   [3]  =  1.0
 ```
 """
-dropzeros(x::SparseVector, trim::Bool = true) = dropzeros!(copy(x), trim)
+dropzeros(x::SparseVector; trim::Bool = true) = dropzeros!(copy(x), trim = trim)
 
 
 function _fillnonzero!(arr::SparseMatrixCSC{Tv, Ti}, val) where {Tv,Ti}

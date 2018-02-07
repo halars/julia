@@ -1,7 +1,12 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
-using Base.LinAlg: mul!, ldiv!, rdiv!
+module SparseTests
+
+using Test
+using SparseArrays
+using LinearAlgebra
 using Base.Printf: @printf
+using Random
 
 @testset "issparse" begin
     @test issparse(sparse(fill(1,5,5)))
@@ -321,33 +326,33 @@ sA = sprandn(3, 7, 0.5)
 sC = similar(sA)
 dA = Array(sA)
 
-@testset "scale and scale!" begin
+@testset "scaling with * and mul!, rmul!, and lmul!" begin
     b = randn(7)
     @test dA * Diagonal(b) == sA * Diagonal(b)
-    @test dA * Diagonal(b) == scale!(sC, sA, b)
-    @test dA * Diagonal(b) == scale!(copy(sA), b)
+    @test dA * Diagonal(b) == mul!(sC, sA, Diagonal(b))
+    @test dA * Diagonal(b) == rmul!(copy(sA), Diagonal(b))
     b = randn(3)
     @test Diagonal(b) * dA == Diagonal(b) * sA
-    @test Diagonal(b) * dA == scale!(sC, b, sA)
-    @test Diagonal(b) * dA == scale!(b, copy(sA))
+    @test Diagonal(b) * dA == mul!(sC, Diagonal(b), sA)
+    @test Diagonal(b) * dA == lmul!(Diagonal(b), copy(sA))
 
     @test dA * 0.5            == sA * 0.5
-    @test dA * 0.5            == scale!(sC, sA, 0.5)
-    @test dA * 0.5            == scale!(copy(sA), 0.5)
+    @test dA * 0.5            == mul!(sC, sA, 0.5)
+    @test dA * 0.5            == rmul!(copy(sA), 0.5)
     @test 0.5 * dA            == 0.5 * sA
-    @test 0.5 * dA            == scale!(sC, sA, 0.5)
-    @test 0.5 * dA            == scale!(0.5, copy(sA))
-    @test scale!(sC, 0.5, sA) == scale!(sC, sA, 0.5)
+    @test 0.5 * dA            == mul!(sC, sA, 0.5)
+    @test 0.5 * dA            == lmul!(0.5, copy(sA))
+    @test mul!(sC, 0.5, sA)   == mul!(sC, sA, 0.5)
 
-    @testset "inverse scale!" begin
+    @testset "inverse scaling with mul!" begin
         bi = inv.(b)
         dAt = copy(transpose(dA))
         sAt = copy(transpose(sA))
-        @test scale!(copy(dAt), bi) ≈ rdiv!(copy(sAt), Diagonal(b))
-        @test scale!(copy(dAt), bi) ≈ rdiv!(copy(sAt), transpose(Diagonal(b)))
-        @test scale!(copy(dAt), conj(bi)) ≈ rdiv!(copy(sAt), adjoint(Diagonal(b)))
+        @test rmul!(copy(dAt), Diagonal(bi)) ≈ rdiv!(copy(sAt), Diagonal(b))
+        @test rmul!(copy(dAt), Diagonal(bi)) ≈ rdiv!(copy(sAt), transpose(Diagonal(b)))
+        @test rmul!(copy(dAt), Diagonal(conj(bi))) ≈ rdiv!(copy(sAt), adjoint(Diagonal(b)))
         @test_throws DimensionMismatch rdiv!(copy(sAt), Diagonal(fill(1., length(b)+1)))
-        @test_throws LinAlg.SingularException rdiv!(copy(sAt), Diagonal(zeros(length(b))))
+        @test_throws LinearAlgebra.SingularException rdiv!(copy(sAt), Diagonal(zeros(length(b))))
     end
 end
 
@@ -536,7 +541,7 @@ end
 
 @testset "issue described in https://groups.google.com/d/msg/julia-users/Yq4dh8NOWBQ/GU57L90FZ3EJ" begin
     A = sparse(I, 5, 5)
-    @test find(A) == find(x -> x == true, A) == find(Array(A))
+    @test findall(A) == findall(x -> x == true, A) == findall(Array(A))
 end
 
 @testset "issue #5824" begin
@@ -1022,11 +1027,11 @@ end
     @test_throws ArgumentError sparse([3], [5], 1.0, 3, 3)
 end
 
-@testset "indmax, indmin, findmax, findmin" begin
+@testset "argmax, argmin, findmax, findmin" begin
     S = sprand(100,80, 0.5)
     A = Array(S)
-    @test indmax(S) == indmax(A)
-    @test indmin(S) == indmin(A)
+    @test argmax(S) == argmax(A)
+    @test argmin(S) == argmin(A)
     @test findmin(S) == findmin(A)
     @test findmax(S) == findmax(A)
     for region in [(1,), (2,), (1,2)], m in [findmax, findmin]
@@ -1035,16 +1040,16 @@ end
 
     S = spzeros(10,8)
     A = Array(S)
-    @test indmax(S) == indmax(A) == CartesianIndex(1,1)
-    @test indmin(S) == indmin(A) == CartesianIndex(1,1)
+    @test argmax(S) == argmax(A) == CartesianIndex(1,1)
+    @test argmin(S) == argmin(A) == CartesianIndex(1,1)
 
     A = Matrix{Int}(I, 0, 0)
     S = sparse(A)
-    iA = try indmax(A) end
-    iS = try indmax(S) end
+    iA = try argmax(A) end
+    iS = try argmax(S) end
     @test iA === iS === nothing
-    iA = try indmin(A) end
-    iS = try indmin(S) end
+    iA = try argmin(A) end
+    iS = try argmin(S) end
     @test iA === iS === nothing
 end
 
@@ -1156,12 +1161,6 @@ Base.isless(x::CustomType, y::CustomType) = isless(x.x, y.x)
     end
 end
 
-@testset "findn" begin
-    b = findn( sparse(1.0I, 4, 4) )
-    @test (length(b[1]) == 4)
-    @test (length(b[2]) == 4)
-end
-
 @testset "rotations" begin
     a = sparse( [1,1,2,3], [1,3,4,1], [1,2,3,4] )
 
@@ -1219,7 +1218,7 @@ end
             times = Float64[0,0,0]
             best = [typemax(Float64), 0]
             for searchtype in [0, 1, 2]
-                gc()
+                GC.gc()
                 tres = @timed test_getindex_algs(S, I, J, searchtype)
                 res[searchtype+1] = tres[1]
                 times[searchtype+1] = tres[2]
@@ -1275,9 +1274,9 @@ end
     for I in IA
         Isorted = sort(I)
         for S in SA
-            gc()
+            GC.gc()
             ru = @timed S[I, J]
-            gc()
+            GC.gc()
             rs = @timed S[Isorted, Jsorted]
             if debug
                 @printf(" %7d | %7d | %7d | %4.2e | %4.2e | %4.2e | %4.2e |\n", round(Int,nnz(S)/S.n), length(I), length(J), rs[2], ru[2], rs[3], ru[3])
@@ -1410,7 +1409,7 @@ end
     targetnumnegzeros = 5
     for (m, n) in ((largedim, largedim), (smalldim, largedim), (largedim, smalldim))
         local A = sprand(m, n, nzprob)
-        struczerosA = find(x -> x == 0, A)
+        struczerosA = findall(x -> x == 0, A)
         poszerosinds = unique(rand(struczerosA, targetnumposzeros))
         negzerosinds = unique(rand(struczerosA, targetnumnegzeros))
         Aposzeros = setindex!(copy(A), 2, poszerosinds)
@@ -1422,15 +1421,15 @@ end
         for Awithzeros in (Aposzeros, Anegzeros, Abothsigns)
             # Basic functionality / dropzeros!
             @test dropzeros!(copy(Awithzeros)) == A
-            @test dropzeros!(copy(Awithzeros), false) == A
+            @test dropzeros!(copy(Awithzeros), trim = false) == A
             # Basic functionality / dropzeros
             @test dropzeros(Awithzeros) == A
-            @test dropzeros(Awithzeros, false) == A
+            @test dropzeros(Awithzeros, trim = false) == A
             # Check trimming works as expected
             @test length(dropzeros!(copy(Awithzeros)).nzval) == length(A.nzval)
             @test length(dropzeros!(copy(Awithzeros)).rowval) == length(A.rowval)
-            @test length(dropzeros!(copy(Awithzeros), false).nzval) == length(Awithzeros.nzval)
-            @test length(dropzeros!(copy(Awithzeros), false).rowval) == length(Awithzeros.rowval)
+            @test length(dropzeros!(copy(Awithzeros), trim = false).nzval) == length(Awithzeros.nzval)
+            @test length(dropzeros!(copy(Awithzeros), trim = false).rowval) == length(Awithzeros.rowval)
         end
     end
     # original lone dropzeros test
@@ -1741,7 +1740,7 @@ end
 end
 
 @testset "fillstored!" begin
-    @test LinAlg.fillstored!(sparse(2.0I, 5, 5), 1) == Matrix(I, 5, 5)
+    @test LinearAlgebra.fillstored!(sparse(2.0I, 5, 5), 1) == Matrix(I, 5, 5)
 end
 
 @testset "factorization" begin
@@ -1779,8 +1778,8 @@ end
     @test UpperTriangular(A)\(UpperTriangular(A)*b) ≈ b
     A[2,2] = 0
     dropzeros!(A)
-    @test_throws LinAlg.SingularException LowerTriangular(A)\b
-    @test_throws LinAlg.SingularException UpperTriangular(A)\b
+    @test_throws LinearAlgebra.SingularException LowerTriangular(A)\b
+    @test_throws LinearAlgebra.SingularException UpperTriangular(A)\b
 end
 
 @testset "issue described in https://groups.google.com/forum/#!topic/julia-dev/QT7qpIpgOaA" begin
@@ -1793,15 +1792,15 @@ end
     @test issparse(Symmetric(m))
     @test issparse(Hermitian(m))
     @test issparse(LowerTriangular(m))
-    @test issparse(LinAlg.UnitLowerTriangular(m))
+    @test issparse(LinearAlgebra.UnitLowerTriangular(m))
     @test issparse(UpperTriangular(m))
-    @test issparse(LinAlg.UnitUpperTriangular(m))
+    @test issparse(LinearAlgebra.UnitUpperTriangular(m))
     @test issparse(Symmetric(Array(m))) == false
     @test issparse(Hermitian(Array(m))) == false
     @test issparse(LowerTriangular(Array(m))) == false
-    @test issparse(LinAlg.UnitLowerTriangular(Array(m))) == false
+    @test issparse(LinearAlgebra.UnitLowerTriangular(Array(m))) == false
     @test issparse(UpperTriangular(Array(m))) == false
-    @test issparse(LinAlg.UnitUpperTriangular(Array(m))) == false
+    @test issparse(LinearAlgebra.UnitUpperTriangular(Array(m))) == false
 end
 
 @testset "test created type of sprand{T}(::Type{T}, m::Integer, n::Integer, density::AbstractFloat)" begin
@@ -2015,7 +2014,7 @@ end
         sprand(5, 5, 1/5)
     end
     A = max.(A, copy(A'))
-    LinAlg.fillstored!(A, 1)
+    LinearAlgebra.fillstored!(A, 1)
     B = A[5:-1:1, 5:-1:1]
     @test issymmetric(B)
 end
@@ -2188,7 +2187,7 @@ end
          1 0 1 1 0]
     y_sp = sparse(y)
 
-    for i=1:length(y)
+    for i in keys(y)
         @test findnext(!iszero, y,i) == findnext(!iszero, y_sp,i)
         @test findprev(!iszero, y,i) == findprev(!iszero, y_sp,i)
     end
@@ -2196,7 +2195,7 @@ end
     z_sp = sparsevec(Dict(1=>1, 5=>1, 8=>0, 10=>1))
     z = collect(z_sp)
 
-    for i=1:length(z)
+    for i in keys(z)
         @test findnext(!iszero, z,i) == findnext(!iszero, z_sp,i)
         @test findprev(!iszero, z,i) == findprev(!iszero, z_sp,i)
     end
@@ -2209,3 +2208,10 @@ end
     v[1] = 2
     @test A[1,1] == 2
 end
+
+@testset "findnz on non-sparse arrays" begin
+    @test findnz([0 1; 0 2]) == ([1, 2], [2, 2], [1, 2])
+    @test findnz(BitArray([false true; false true])) == ([1, 2], [2, 2], trues(2))
+end
+
+end # module

@@ -5,12 +5,13 @@ module CHOLMOD
 import Base: (*), convert, copy, eltype, getindex, getproperty, show, size,
              IndexStyle, IndexLinear, IndexCartesian, adjoint
 
-import Base.LinAlg: (\),
+using LinearAlgebra
+import LinearAlgebra: (\),
                  cholfact, cholfact!, det, diag, ishermitian, isposdef,
                  issuccess, issymmetric, ldltfact, ldltfact!, logdet
 
 using SparseArrays
-using Base.Printf.@printf
+using Printf: @printf
 
 import Libdl
 
@@ -165,7 +166,7 @@ function __init__()
         end
 
     catch ex
-        @error "Error during initialization of module CHOLMOD" exception=ex
+        @error "Error during initialization of module CHOLMOD" exception=ex,catch_backtrace()
     end
 end
 
@@ -348,8 +349,8 @@ end
 Factor(ptr::Ptr{C_Factor{Tv}}) where {Tv<:VTypes} = Factor{Tv}(ptr)
 Factor(x::Factor) = x
 
-Base.LinAlg.adjoint(F::Factor) = Adjoint(F)
-Base.LinAlg.transpose(F::Factor) = Transpose(F)
+Base.adjoint(F::Factor) = Adjoint(F)
+Base.transpose(F::Factor) = Transpose(F)
 
 # All pointer loads should be checked to make sure that SuiteSparse is not called with
 # a C_NULL pointer which could cause a segfault. Pointers are set to null
@@ -773,7 +774,7 @@ function solve(sys::Integer, F::Factor{Tv}, B::Dense{Tv}) where Tv<:VTypes
     if !issuccess(F)
         s = unsafe_load(pointer(F))
         if s.is_ll == 1
-            throw(LinAlg.PosDefException(s.minor))
+            throw(LinearAlgebra.PosDefException(s.minor))
         else
             throw(ArgumentError("factorized matrix has one or more zero pivots. Try using lufact instead."))
         end
@@ -815,7 +816,7 @@ end
 
 function get_perm(F::Factor)
     s = unsafe_load(pointer(F))
-    p = unsafe_wrap(Array, s.Perm, s.n, false)
+    p = unsafe_wrap(Array, s.Perm, s.n, own = false)
     p .+ 1
 end
 get_perm(FC::FactorComponent) = get_perm(Factor(FC))
@@ -1073,9 +1074,9 @@ function SparseMatrixCSC{Tv,SuiteSparse_long}(A::Sparse{Tv}) where Tv
     end
 
     B = SparseMatrixCSC(s.nrow, s.ncol,
-        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), false)),
-        increment(unsafe_wrap(Array, s.i, (s.nzmax,), false)),
-        copy(unsafe_wrap(Array, s.x, (s.nzmax,), false)))
+        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), own = false)),
+        increment(unsafe_wrap(Array, s.i, (s.nzmax,), own = false)),
+        copy(unsafe_wrap(Array, s.x, (s.nzmax,), own = false)))
 
     if s.sorted == 0
         return SparseArrays.sortSparseMatrixCSC!(B)
@@ -1090,9 +1091,9 @@ function (::Type{Symmetric{Float64,SparseMatrixCSC{Float64,SuiteSparse_long}}})(
     end
 
     B = Symmetric(SparseMatrixCSC(s.nrow, s.ncol,
-        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), false)),
-        increment(unsafe_wrap(Array, s.i, (s.nzmax,), false)),
-        copy(unsafe_wrap(Array, s.x, (s.nzmax,), false))), s.stype > 0 ? :U : :L)
+        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), own = false)),
+        increment(unsafe_wrap(Array, s.i, (s.nzmax,), own = false)),
+        copy(unsafe_wrap(Array, s.x, (s.nzmax,), own = false))), s.stype > 0 ? :U : :L)
 
     if s.sorted == 0
         return SparseArrays.sortSparseMatrixCSC!(B.data)
@@ -1107,9 +1108,9 @@ function Hermitian{Tv,SparseMatrixCSC{Tv,SuiteSparse_long}}(A::Sparse{Tv}) where
     end
 
     B = Hermitian(SparseMatrixCSC(s.nrow, s.ncol,
-        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), false)),
-        increment(unsafe_wrap(Array, s.i, (s.nzmax,), false)),
-        copy(unsafe_wrap(Array, s.x, (s.nzmax,), false))), s.stype > 0 ? :U : :L)
+        increment(unsafe_wrap(Array, s.p, (s.ncol + 1,), own = false)),
+        increment(unsafe_wrap(Array, s.i, (s.nzmax,), own = false)),
+        copy(unsafe_wrap(Array, s.x, (s.nzmax,), own = false))), s.stype > 0 ? :U : :L)
 
     if s.sorted == 0
         return SparseArrays.sortSparseMatrixCSC!(B.data)
@@ -1263,7 +1264,7 @@ function getindex(A::Sparse{T}, i0::Integer, i1::Integer) where T
     r1 = Int(unsafe_load(s.p, i1) + 1)
     r2 = Int(unsafe_load(s.p, i1 + 1))
     (r1 > r2) && return zero(T)
-    r1 = Int(searchsortedfirst(unsafe_wrap(Array, s.i, (s.nzmax,), false),
+    r1 = Int(searchsortedfirst(unsafe_wrap(Array, s.i, (s.nzmax,), own = false),
         i0 - 1, r1, r2, Base.Order.Forward))
     ((r1 > r2) || (unsafe_load(s.i, r1) + 1 != i0)) ? zero(T) : unsafe_load(s.x, r1)
 end

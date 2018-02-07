@@ -5,7 +5,7 @@ module Broadcast
 using Base.Cartesian
 using Base: Indices, OneTo, linearindices, tail, to_shape,
             _msk_end, unsafe_bitgetindex, bitcache_chunks, bitcache_size, dumpbitcache,
-            isoperator
+            isoperator, promote_typejoin
 import Base: broadcast, broadcast!
 export BroadcastStyle, broadcast_indices, broadcast_similar,
        broadcast_getindex, broadcast_setindex!, dotview, @__dot__
@@ -500,14 +500,13 @@ end
             @nexprs $nargs i->(@inbounds val_i = _broadcast_getindex(A_i, I_i))
             # call the function
             V = @ncall $nargs f val
-            S = typeof(V)
             # store the result
-            if S <: eltype(B)
+            if V isa eltype(B)
                 @inbounds B[I] = V
             else
                 # This element type doesn't fit in B. Allocate a new B with wider eltype,
                 # copy over old values, and continue
-                newB = Base.similar(B, typejoin(eltype(B), S))
+                newB = Base.similar(B, promote_typejoin(eltype(B), typeof(V)))
                 for II in Iterators.take(iter, count)
                     newB[II] = B[II]
                 end
@@ -622,7 +621,7 @@ julia> string.(("one","two","three","four"), ": ", 1:4)
 const NonleafHandlingTypes = Union{DefaultArrayStyle,ArrayConflict,VectorStyle,MatrixStyle}
 
 @inline function broadcast(f, s::NonleafHandlingTypes, ::Type{ElType}, inds::Indices, As...) where ElType
-    if !Base._isleaftype(ElType)
+    if !Base.isconcretetype(ElType)
         return broadcast_nonleaf(f, s, ElType, inds, As...)
     end
     dest = broadcast_similar(f, s, ElType, inds, As...)

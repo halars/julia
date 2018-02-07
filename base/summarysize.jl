@@ -1,7 +1,7 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 struct SummarySize
-    seen::ObjectIdDict
+    seen::IdDict{Any,Any}
     frontier_x::Vector{Any}
     frontier_i::Vector{Int}
     exclude::Any
@@ -21,10 +21,10 @@ Compute the amount of memory used by all unique objects reachable from the argum
   fields, even if those fields would normally be excluded.
 """
 function summarysize(obj;
-                     exclude = Union{DataType, TypeName, Method},
-                     chargeall = Union{TypeMapEntry, Core.MethodInstance})
+                     exclude = Union{DataType, Core.TypeName, Core.MethodInstance},
+                     chargeall = Union{Core.TypeMapEntry, Method})
     @nospecialize obj exclude chargeall
-    ss = SummarySize(ObjectIdDict(), Any[], Int[], exclude, chargeall)
+    ss = SummarySize(IdDict(), Any[], Int[], exclude, chargeall)
     size::Int = ss(obj)
     while !isempty(ss.frontier_x)
         # DFS heap traversal of everything without a specialization
@@ -94,7 +94,7 @@ function (ss::SummarySize)(obj::DataType)
     return size
 end
 
-function (ss::SummarySize)(obj::TypeName)
+function (ss::SummarySize)(obj::Core.TypeName)
     key = pointer_from_objref(obj)
     haskey(ss.seen, key) ? (return 0) : (ss.seen[key] = true)
     return Core.sizeof(obj) + (isdefined(obj, :mt) ? ss(obj.mt) : 0)
@@ -130,10 +130,10 @@ end
 function (ss::SummarySize)(obj::Module)
     haskey(ss.seen, obj) ? (return 0) : (ss.seen[obj] = true)
     size::Int = Core.sizeof(obj)
-    for binding in names(obj, true)
+    for binding in names(obj, all = true)
         if isdefined(obj, binding) && !isdeprecated(obj, binding)
             value = getfield(obj, binding)
-            if !isa(value, Module) || module_parent(value) === obj
+            if !isa(value, Module) || parentmodule(value) === obj
                 size += ss(value)::Int
                 if isa(value, UnionAll)
                     value = unwrap_unionall(value)

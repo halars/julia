@@ -19,18 +19,9 @@ Some general notes:
 
 ```@docs
 Base.exit
-Base.quit
 Base.atexit
-Base.atreplinit
 Base.isinteractive
-Base.varinfo
 Base.summarysize
-Base.edit(::AbstractString, ::Integer)
-Base.edit(::Any)
-Base.@edit
-Base.less(::AbstractString)
-Base.less(::Any)
-Base.@less
 Base.clipboard(::Any)
 Base.clipboard()
 Base.require
@@ -39,14 +30,9 @@ Base.__precompile__
 Base.include
 Base.include_string
 Base.include_dependency
-Base.Docs.apropos
 Base.which(::Any, ::Any)
-Base.which(::Symbol)
-Base.@which
 Base.methods
-Base.methodswith
 Base.@show
-Base.versioninfo
 ans
 ```
 
@@ -86,17 +72,10 @@ primitive type
 
 ## Base Modules
 ```@docs
-Base.BLAS
 Base.Docs
 Base.Iterators
-Base.LAPACK
-Base.LibGit2
 Base.Libc
-Base.LinAlg
-Base.Markdown
 Base.Meta
-Base.Pkg
-Base.Serializer
 Base.StackTraces
 Base.Sys
 Base.Threads
@@ -114,7 +93,7 @@ Core.typeassert
 Core.typeof
 Core.tuple
 Base.ntuple
-Base.object_id
+Base.objectid
 Base.hash
 Base.finalizer
 Base.finalize
@@ -122,6 +101,7 @@ Base.copy
 Base.deepcopy
 Base.getproperty
 Base.setproperty!
+Base.propertynames
 Core.getfield
 Core.setfield!
 Core.isdefined
@@ -135,28 +115,55 @@ Base.identity
 
 ## Properties of Types
 
+### Type relations
+
 ```@docs
 Base.supertype
 Core.:(<:)
 Base.:(>:)
-Base.subtypes
+Base.typejoin
+Base.typeintersect
+Base.promote_type
+Base.promote_rule
+Base.isdispatchtuple
+```
+
+### Declared structure
+
+```@docs
+Base.isimmutable
+Base.isabstracttype
+Base.isprimitivetype
+Base.isstructtype
+Base.nameof(::DataType)
+Base.fieldnames
+Base.fieldname
+```
+
+### Memory layout
+
+```@docs
+Base.sizeof(::Type)
+Base.isconcretetype
+Base.isbits
+Core.fieldtype
+Base.fieldcount
+Base.fieldoffset
+Base.datatype_alignment
+Base.datatype_haspadding
+Base.datatype_pointerfree
+```
+
+### Special values
+
+```@docs
 Base.typemin
 Base.typemax
 Base.realmin
 Base.realmax
 Base.maxintfloat
-Base.sizeof(::Type)
 Base.eps(::Type{<:AbstractFloat})
 Base.eps(::AbstractFloat)
-Base.promote_type
-Base.promote_rule
-Base.fieldoffset
-Core.fieldtype
-Base.isimmutable
-Base.isbits
-Base.isconcrete
-Base.typejoin
-Base.typeintersect
 Base.instances
 ```
 
@@ -168,6 +175,7 @@ Core.Union
 Union{}
 Core.UnionAll
 Core.Tuple
+Core.NamedTuple
 Base.Val
 Core.Vararg
 Core.Nothing
@@ -179,7 +187,7 @@ Base.Enums.@enum
 
 ```@docs
 Core.Function
-Base.method_exists
+Base.hasmethod
 Core.applicable
 Core.invoke
 Base.invokelatest
@@ -289,6 +297,7 @@ Base.ParseError
 Core.StackOverflowError
 Base.SystemError
 Core.TypeError
+Core.UndefKeywordError
 Core.UndefRefError
 Core.UndefVarError
 Base.InitError
@@ -299,7 +308,7 @@ Base.ExponentialBackOff
 ## Events
 
 ```@docs
-Base.Timer(::Function, ::Real, ::Real)
+Base.Timer(::Function, ::Real)
 Base.Timer
 Base.AsyncCondition
 Base.AsyncCondition(::Function)
@@ -308,31 +317,23 @@ Base.AsyncCondition(::Function)
 ## Reflection
 
 ```@docs
-Base.module_name
-Base.module_parent
+Base.nameof(::Module)
+Base.parentmodule
 Base.@__MODULE__
 Base.fullname
 Base.names
 Core.nfields
-Base.fieldnames
-Base.fieldname
-Base.fieldcount
-Base.datatype_module
-Base.datatype_name
 Base.isconst
-Base.function_name
-Base.function_module(::Function)
-Base.function_module(::Any, ::Any)
+Base.nameof(::Function)
 Base.functionloc(::Any, ::Any)
 Base.functionloc(::Method)
-Base.@functionloc
 ```
 
 ## Internals
 
 ```@docs
-Base.gc
-Base.gc_enable
+Base.GC.gc
+Base.GC.enable
 Meta.lower
 Meta.@lower
 Meta.parse(::AbstractString, ::Int)
@@ -341,14 +342,6 @@ Base.macroexpand
 Base.@macroexpand
 Base.@macroexpand1
 Base.code_lowered
-Base.@code_lowered
 Base.code_typed
-Base.@code_typed
-Base.code_warntype
-Base.@code_warntype
-Base.code_llvm
-Base.@code_llvm
-Base.code_native
-Base.@code_native
 Base.precompile
 ```

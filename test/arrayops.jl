@@ -2,8 +2,10 @@
 
 # Array test
 isdefined(Main, :TestHelpers) || @eval Main include("TestHelpers.jl")
-using Main.TestHelpers.OAs
+using .Main.TestHelpers.OAs
 using SparseArrays
+
+using Random, LinearAlgebra
 
 @testset "basics" begin
     @test length([1, 2, 3]) == 3
@@ -267,31 +269,34 @@ end
 
     a = [3, 5, -7, 6]
     b = [4, 6, 2, -7, 1]
-    ind = find(occursin(b), a)
+    ind = findall(occursin(b), a)
     @test ind == [3,4]
-    @test find(occursin(Int[]), a) == Int[]
-    @test find(occursin(a), Int[]) == Int[]
+    @test findall(occursin(Int[]), a) == Int[]
+    @test findall(occursin(a), Int[]) == Int[]
 
     a = [1,2,3,4,5]
     b = [2,3,4,6]
-    @test find(occursin(b), a) == [2,3,4]
-    @test find(occursin(a), b) == [1,2,3]
-    @test find(occursin(Int[]), a) == Int[]
-    @test find(occursin(a), Int[]) == Int[]
+    @test findall(occursin(b), a) == [2,3,4]
+    @test findall(occursin(a), b) == [1,2,3]
+    @test findall(occursin(Int[]), a) == Int[]
+    @test findall(occursin(a), Int[]) == Int[]
 
     a = Vector(1:3:15)
     b = Vector(2:4:10)
-    @test find(occursin(b), a) == [4]
-    @test find(occursin(b), [a[1:4]; a[4:end]]) == [4,5]
+    @test findall(occursin(b), a) == [4]
+    @test findall(occursin(b), [a[1:4]; a[4:end]]) == [4,5]
 
-    @test find(occursin(NaN), [1.0, NaN, 2.0]) == [2]
-    @test find(occursin(NaN), [1.0, 2.0, NaN]) == [3]
+    @test findall(occursin(NaN), [1.0, NaN, 2.0]) == [2]
+    @test findall(occursin(NaN), [1.0, 2.0, NaN]) == [3]
 
-    @testset "find(::OccursIn, b) for uncomparable element types" begin
+    @testset "findall(::OccursIn, b) for uncomparable element types" begin
         a = [1 + 1im, 1 - 1im]
-        @test find(occursin(1 + 1im), a) == [1]
-        @test find(occursin(a), a)       == [1,2]
+        @test findall(occursin(1 + 1im), a) == [1]
+        @test findall(occursin(a), a)       == [1,2]
     end
+
+    @test findall(occursin([1, 2]), 2) == [1]
+    @test findall(occursin([1, 2]), 3) == []
 
     rt = Base.return_types(setindex!, Tuple{Array{Int32, 3}, UInt8, Vector{Int}, Int16, UnitRange{Int}})
     @test length(rt) == 1 && rt[1] == Array{Int32, 3}
@@ -423,11 +428,11 @@ end
     @test X[end,Y[end]] == 11
 end
 
-@testset "find, findfirst, findnext, findlast, findprev" begin
+@testset "findall, findfirst, findnext, findlast, findprev" begin
     a = [0,1,2,3,0,1,2,3]
-    @test find(!iszero, a) == [2,3,4,6,7,8]
-    @test find(a.==2) == [3,7]
-    @test find(isodd,a) == [2,4,6,8]
+    @test findall(!iszero, a) == [2,3,4,6,7,8]
+    @test findall(a.==2) == [3,7]
+    @test findall(isodd,a) == [2,4,6,8]
     @test findfirst(!iszero, a) == 2
     @test findfirst(a.==0) == 1
     @test findfirst(a.==5) == nothing
@@ -460,38 +465,65 @@ end
 end
 @testset "find with Matrix" begin
     A = [1 2 0; 3 4 0]
-    @test find(isodd, A) == [CartesianIndex(1, 1), CartesianIndex(2, 1)]
-    @test find(!iszero, A) == [CartesianIndex(1, 1), CartesianIndex(2, 1),
+    @test findall(isodd, A) == [CartesianIndex(1, 1), CartesianIndex(2, 1)]
+    @test findall(!iszero, A) == [CartesianIndex(1, 1), CartesianIndex(2, 1),
                                CartesianIndex(1, 2), CartesianIndex(2, 2)]
+    @test findfirst(isodd, A) == CartesianIndex(1, 1)
+    @test findlast(isodd, A) == CartesianIndex(2, 1)
+    @test findnext(isodd, A, CartesianIndex(1, 1)) == CartesianIndex(1, 1)
+    @test findprev(isodd, A, CartesianIndex(2, 1)) == CartesianIndex(2, 1)
+    @test findnext(isodd, A, CartesianIndex(1, 2)) === nothing
+    @test findprev(iseven, A, CartesianIndex(2, 1)) === nothing
 end
 @testset "find with general iterables" begin
     s = "julia"
-    @test find(c -> c == 'l', s) == [3]
+    @test findall(c -> c == 'l', s) == [3]
+    @test findfirst(c -> c == 'l', s) == 3
+    @test findlast(c -> c == 'l', s) == 3
+    @test findnext(c -> c == 'l', s, 1) == 3
+    @test findprev(c -> c == 'l', s, 5) == 3
+    @test findnext(c -> c == 'l', s, 4) === nothing
+    @test findprev(c -> c == 'l', s, 2) === nothing
+
     g = Base.Unicode.graphemes("日本語")
-    @test find(isascii, g) == Int[]
-    @test find(!iszero, (i % 2 for i in 1:10)) == 1:2:9
+    @test findall(!isempty, g) == 1:3
+    @test isempty(findall(isascii, g))
+    @test findfirst(!isempty, g) == 1
+    @test findfirst(isascii, g) === nothing
+    # Check that the last index isn't assumed to be typemax(Int)
+    @test_throws MethodError findlast(!iszero, g)
+
+    g2 = (i % 2 for i in 1:10)
+    @test findall(!iszero, g2) == 1:2:9
+    @test findfirst(!iszero, g2) == 1
+    @test findlast(!iszero, g2) == 9
+    @test findfirst(equalto(2), g2) === nothing
+    @test findlast(equalto(2), g2) === nothing
+
+    g3 = (i % 2 for i in 1:10, j in 1:2)
+    @test findall(!iszero, g3) == findall(!iszero, collect(g3))
+    @test findfirst(!iszero, g3) == CartesianIndex(1, 1)
+    @test findlast(!iszero, g3) == CartesianIndex(9, 2)
+    @test findfirst(equalto(2), g3) === nothing
+    @test findlast(equalto(2), g3) === nothing
+
+    g4 = (x for x in [true, false, true, false])
+    @test findall(g4) == [1, 3]
+    @test findfirst(g4) == 1
+    @test findlast(g4) == 3
+
+    g5 = (x for x in [true false; true false])
+    @test findall(g5) == findall(collect(g5))
+    @test findfirst(g5) == CartesianIndex(1, 1)
+    @test findlast(g5) == CartesianIndex(2, 1)
+
+    @test findfirst(x for x in Bool[]) === nothing
+    @test findlast(x for x in Bool[]) === nothing
 end
-@testset "findn" begin
-    b = findn(fill(1,2,2,2,2))
-    @test (length(b[1]) == 16)
-    @test (length(b[2]) == 16)
-    @test (length(b[3]) == 16)
-    @test (length(b[4]) == 16)
 
-    #hand made case
-    a = ([2,1,2],[1,2,2],[2,2,2])
-    z = zeros(2,2,2)
-    for i = 1:3
-        z[a[1][i],a[2][i],a[3][i]] = 10
-    end
-    @test isequal(a,findn(z))
-
-    @test findn([1, 0, 2]) == ([1, 3], )
-end
-
-@testset "findmin findmax indmin indmax" begin
-    @test indmax([10,12,9,11]) == 2
-    @test indmin([10,12,9,11]) == 3
+@testset "findmin findmax argmin argmax" begin
+    @test argmax([10,12,9,11]) == 2
+    @test argmin([10,12,9,11]) == 3
     @test findmin([NaN,3.2,1.8]) === (NaN,1)
     @test findmax([NaN,3.2,1.8]) === (NaN,1)
     @test findmin([NaN,3.2,1.8,NaN]) === (NaN,1)
@@ -501,13 +533,13 @@ end
 
     #14085
     @test findmax(4:9) == (9,6)
-    @test indmax(4:9) == 6
+    @test argmax(4:9) == 6
     @test findmin(4:9) == (4,1)
-    @test indmin(4:9) == 1
+    @test argmin(4:9) == 1
     @test findmax(5:-2:1) == (5,1)
-    @test indmax(5:-2:1) == 1
+    @test argmax(5:-2:1) == 1
     @test findmin(5:-2:1) == (1,3)
-    @test indmin(5:-2:1) == 3
+    @test argmin(5:-2:1) == 3
 
     #23094
     @test_throws MethodError findmax(Set(["abc"]))
@@ -1206,6 +1238,9 @@ end
     @test isequal([1,2,3], [a for (a,b) in enumerate(2:4)])
     @test isequal([2,3,4], [b for (a,b) in enumerate(2:4)])
 
+    @test [s for s in Union{String, Nothing}["a", nothing]] isa Vector{Union{String, Nothing}}
+    @test [s for s in Union{String, Missing}["a", missing]] isa Vector{Union{String, Missing}}
+
     @testset "comprehension in let-bound function" begin
         let x⊙y = sum([x[i]*y[i] for i=1:length(x)])
             @test [1,2] ⊙ [3,4] == 11
@@ -1377,13 +1412,14 @@ function i7197()
 end
 @test i7197() == (2,2)
 
-# PR #8622 and general indexin test
-function pr8622()
-    x=[1,3,5,7]
-    y=[5,4,3]
-    return indexin(x,y)
-end
-@test pr8622() == [0,3,1,0]
+# PR #8622 and general indexin tests
+@test indexin([1,3,5,7], [5,4,3]) == [nothing,3,1,nothing]
+@test indexin([1 3; 5 7], [5 4; 3 2]) == [nothing CartesianIndex(2, 1); CartesianIndex(1, 1) nothing]
+@test indexin((2 * x + 1 for x in 0:3), [5,4,3,5,6]) == [nothing,3,4,nothing]
+@test indexin(6, [1,3,6,6,2]) == fill(4, ())
+@test indexin([6], [1,3,6,6,2]) == [4]
+@test indexin([3], 2:5) == [2]
+@test indexin([3.0], 2:5) == [2]
 
 #6828 - size of specific dimensions
 let a = Array{Float64}(uninitialized, 10)
@@ -1738,7 +1774,7 @@ end
     b = rand(6,7)
     @test_throws BoundsError copyto!(a,b)
     @test_throws ArgumentError copyto!(a,2:3,1:3,b,1:5,2:7)
-    @test_throws ArgumentError Base.copy_transpose!(a,2:3,1:3,b,1:5,2:7)
+    @test_throws ArgumentError LinearAlgebra.copy_transpose!(a,2:3,1:3,b,1:5,2:7)
 end
 
 module RetTypeDecl
@@ -1852,16 +1888,6 @@ end
 fill!(B, 2)
 @test all(x->x==2, B)
 
-iall = repmat(1:size(A,1), 1, size(A,2))
-jall = repmat((1:size(A,2))', size(A,1), 1)
-i,j = findn(B)
-@test vec(i) == vec(iall)
-@test vec(j) == vec(jall)
-fill!(S, 2)
-i,j = findn(S)
-@test vec(i) == vec(iall)
-@test vec(j) == vec(jall)
-
 copyto!(B, A)
 copyto!(S, A)
 
@@ -1946,7 +1972,7 @@ let A = zeros(Int, 2, 2), B = zeros(Float64, 2, 2)
     for f in [f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16,
               f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30,
               f31, f32, f33, f34, f35, f36, f37, f38, f39, f40, f41, f42]
-        @test Base._isleaftype(Base.return_types(f, ())[1])
+        @test isconcretetype(Base.return_types(f, ())[1])
     end
 end
 
@@ -1999,7 +2025,7 @@ end
 @test f15894(fill(1, 100)) == 100
 end
 
-@testset "sign, conj, ~" begin
+@testset "sign, conj[!], ~" begin
     local A, B, C
     A = [-10,0,3]
     B = [-10.0,0.0,3.0]
@@ -2011,6 +2037,7 @@ end
     @test typeof(sign.(B)) == Vector{Float64}
 
     @test conj(A) == A
+    @test conj!(copy(A)) == A
     @test conj(B) == A
     @test conj(C) == [1,-im,0]
     @test typeof(conj(A)) == Vector{Int}
@@ -2179,11 +2206,11 @@ end
     @test accumulate(op, [10 20 30], 2) == [10 op(10, 20) op(op(10, 20), 30)] == [10 40 110]
 end
 
-struct F21666{T <: Base.TypeArithmetic}
+struct F21666{T <: Base.ArithmeticStyle}
     x::Float32
 end
 
-Base.TypeArithmetic(::Type{F21666{T}}) where {T} = T()
+Base.ArithmeticStyle(::Type{F21666{T}}) where {T} = T()
 Base.:+(x::F, y::F) where {F <: F21666} = F(x.x + y.x)
 Float64(x::F21666) = Float64(x.x)
 @testset "Exactness of cumsum # 21666" begin
@@ -2276,4 +2303,24 @@ end
 
 @testset "inference hash array 22740" begin
     @inferred hash([1,2,3])
+end
+
+@testset "indices-related shape promotion errors" begin
+    @test_throws DimensionMismatch Base.promote_shape((2,), (3,))
+    @test_throws DimensionMismatch Base.promote_shape((2, 3), (2, 4))
+    @test_throws DimensionMismatch Base.promote_shape((3, 2), (2, 2))
+    inds_a = Base.Indices{2}([1:3, 1:2])
+    inds_b = Base.Indices{2}([1:3, 1:6])
+    @test_throws DimensionMismatch Base.promote_shape(inds_a, inds_b)
+    inds_a = Base.Indices{2}([1:3, 1:2])
+    inds_b = Base.Indices{2}([1:4, 1:2])
+    @test_throws DimensionMismatch Base.promote_shape(inds_a, inds_b)
+    # fails because ranges 3, 4 of inds_a are not 1:1
+    inds_a = Base.Indices{4}([1:3, 1:2, 1:3, 1:2])
+    inds_b = Base.Indices{2}([1:3, 1:2])
+    @test_throws DimensionMismatch Base.promote_shape(inds_a, inds_b)
+    # succeeds for converse reason
+    inds_a = Base.Indices{2}([1:3, 1:1])
+    inds_b = Base.Indices{1}([1:3])
+    @test Base.promote_shape(inds_a, inds_b) == Base.promote_shape(inds_b, inds_a)
 end

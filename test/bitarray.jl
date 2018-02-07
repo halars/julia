@@ -1,6 +1,7 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 using Base: findprevnot, findnextnot
+using Random, LinearAlgebra, Test
 
 tc(r1::NTuple{N,Any}, r2::NTuple{N,Any}) where {N} = all(x->tc(x...), [zip(r1,r2)...])
 tc(r1::BitArray{N}, r2::Union{BitArray{N},Array{Bool,N}}) where {N} = true
@@ -8,7 +9,7 @@ tc(r1::Transpose{Bool,BitVector}, r2::Union{Transpose{Bool,BitVector},Transpose{
 tc(r1::T, r2::T) where {T} = true
 tc(r1,r2) = false
 
-bitcheck(b::BitArray) = Base._check_bitarray_consistency(b)
+bitcheck(b::BitArray) = Test._check_bitarray_consistency(b)
 bitcheck(x) = true
 
 function check_bitop_call(ret_type, func, args...)
@@ -110,6 +111,9 @@ timesofar("conversions")
     end
 
     @testset "copyto!" begin
+        let b1 = trues(1)
+            @test all(copyto!(b1, []))
+        end
         for n in [1; 1023:1025]
             b1 = falses(n)
             for m in [1; 10; 1023:1025]
@@ -233,7 +237,7 @@ timesofar("constructors")
             @check_bit_operation getindex(b1, m1) BitVector
         end
 
-        t1 = find(bitrand(l))
+        t1 = findall(bitrand(l))
         @check_bit_operation getindex(b1, t1)        BitVector
 
         for j = 1:l
@@ -271,7 +275,7 @@ timesofar("constructors")
         y = rand(0.0:1.0)
         @check_bit_operation setindex!(b1, y, 1:100) T
 
-        t1 = find(bitrand(l))
+        t1 = findall(bitrand(l))
         x = rand(Bool)
         @check_bit_operation setindex!(b1, x, t1) T
         b2 = bitrand(length(t1))
@@ -1089,7 +1093,7 @@ timesofar("datamove")
         @check_bit_operation findfirst(x->true, b1)  Union{Int,Nothing}
         @check_bit_operation findfirst(x->false, b1) Union{Int,Nothing}
 
-        @check_bit_operation find(b1) Vector{Int}
+        @check_bit_operation findall(b1) Vector{Int}
     end
 
     b1 = trues(v1)
@@ -1105,10 +1109,11 @@ timesofar("datamove")
     end
 
     b1 = bitrand(n1, n2)
-    @check_bit_operation findnz(b1) Tuple{Vector{Int}, Vector{Int}, BitArray}
+    @check_bit_operation findall(b1) Vector{CartesianIndex{2}}
+    @check_bit_operation findall(!iszero, b1) Vector{CartesianIndex{2}}
 end
 
-timesofar("nnz&find")
+timesofar("find")
 
 @testset "Findnext/findprev" begin
     b1 = trues(v1)

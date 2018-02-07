@@ -431,7 +431,7 @@ end
 
 function copyto!(dest::BitArray, src::Array)
     length(src) > length(dest) && throw(BoundsError(dest, length(dest)+1))
-    length(src) == 0 && return det
+    length(src) == 0 && return dest
     return unsafe_copyto!(dest, 1, src, 1, length(src))
 end
 
@@ -498,7 +498,7 @@ end
 reinterpret(::Type{Bool}, B::BitArray, dims::NTuple{N,Int}) where {N} = reinterpret(B, dims)
 reinterpret(B::BitArray, dims::NTuple{N,Int}) where {N} = reshape(B, dims)
 
-if module_name(@__MODULE__) === :Base  # avoid method overwrite
+if nameof(@__MODULE__) === :Base  # avoid method overwrite
 (::Type{T})(x::T) where {T<:BitArray} = copy(x)
 end
 
@@ -1598,23 +1598,23 @@ function findprev(testf::Function, B::BitArray, start::Integer)
 end
 #findlast(testf::Function, B::BitArray) = findprev(testf, B, 1)  ## defined in array.jl
 
-function find(B::BitArray)
+function findall(B::BitArray)
     l = length(B)
     nnzB = count(B)
-    I = Vector{Int}(uninitialized, nnzB)
+    ind = first(keys(B))
+    I = Vector{typeof(ind)}(uninitialized, nnzB)
     nnzB == 0 && return I
     Bc = B.chunks
-    Bcount = 1
     Icount = 1
     for i = 1:length(Bc)-1
         u = UInt64(1)
         c = Bc[i]
         for j = 1:64
             if c & u != 0
-                I[Icount] = Bcount
+                I[Icount] = ind
                 Icount += 1
             end
-            Bcount += 1
+            ind = nextind(B, ind)
             u <<= 1
         end
     end
@@ -1622,36 +1622,17 @@ function find(B::BitArray)
     c = Bc[end]
     for j = 0:_mod64(l-1)
         if c & u != 0
-            I[Icount] = Bcount
+            I[Icount] = ind
             Icount += 1
         end
-        Bcount += 1
+        ind = nextind(B, ind)
         u <<= 1
     end
     return I
 end
 
-findn(B::BitVector) = find(B)
-
-function findn(B::BitMatrix)
-    nnzB = count(B)
-    I = Vector{Int}(uninitialized, nnzB)
-    J = Vector{Int}(uninitialized, nnzB)
-    cnt = 1
-    for j = 1:size(B,2), i = 1:size(B,1)
-        if B[i,j]
-            I[cnt] = i
-            J[cnt] = j
-            cnt += 1
-        end
-    end
-    return I, J
-end
-
-function findnz(B::BitMatrix)
-    I, J = findn(B)
-    return I, J, trues(length(I))
-end
+# For performance
+findall(::typeof(!iszero), B::BitArray) = findall(B)
 
 ## Reductions ##
 

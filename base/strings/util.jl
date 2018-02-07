@@ -19,14 +19,8 @@ true
 ```
 """
 function startswith(a::AbstractString, b::AbstractString)
-    i = start(a)
-    j = start(b)
-    while !done(a,i) && !done(b,i)
-        c, i = next(a,i)
-        d, j = next(b,j)
-        (c != d) && (return false)
-    end
-    done(b,i)
+    a, b = Iterators.Stateful(a), Iterators.Stateful(b)
+    all(splat(==), zip(a, b)) && isempty(b)
 end
 startswith(str::AbstractString, chars::Chars) = !isempty(str) && first(str) in chars
 
@@ -45,18 +39,9 @@ true
 ```
 """
 function endswith(a::AbstractString, b::AbstractString)
-    i = endof(a)
-    j = endof(b)
-    a1 = start(a)
-    b1 = start(b)
-    while a1 <= i && b1 <= j
-        c = a[i]
-        d = b[j]
-        (c != d) && (return false)
-        i = prevind(a,i)
-        j = prevind(b,j)
-    end
-    j < b1
+    a = Iterators.Stateful(Iterators.reverse(a))
+    b = Iterators.Stateful(Iterators.reverse(b))
+    all(splat(==), zip(a, b)) && isempty(b)
 end
 endswith(str::AbstractString, chars::Chars) = !isempty(str) && last(str) in chars
 
@@ -70,7 +55,7 @@ startswith(a::Vector{UInt8}, b::Vector{UInt8}) = length(a) ≥ length(b) &&
 # TODO: fast endswith
 
 """
-    chop(s::AbstractString, head::Integer=0, tail::Integer=1)
+    chop(s::AbstractString; head::Integer = 0, tail::Integer = 1)
 
 Remove the first `head` and the last `tail` characters from `s`.
 The call `chop(s)` removes the last character from `s`.
@@ -85,16 +70,19 @@ julia> a = "March"
 julia> chop(a)
 "Marc"
 
-julia> chop(a, 1, 2)
+julia> chop(a, head = 1, tail = 2)
 "ar"
 
-julia> chop(a, 5, 5)
+julia> chop(a, head = 5, tail = 5)
 ""
 ```
 """
-chop(s::AbstractString) = SubString(s, start(s), prevind(s, endof(s)))
-chop(s::AbstractString, head::Integer, tail::Integer) =
-    SubString(s, nextind(s, start(s), head), prevind(s, endof(s), tail))
+function chop(s::AbstractString; head::Integer = 0, tail::Integer = 1)
+    SubString(s, nextind(s, firstindex(s), head), prevind(s, lastindex(s), tail))
+end
+
+# TODO: optimization for the default case based on
+# chop(s::AbstractString) = SubString(s, firstindex(s), prevind(s, lastindex(s)))
 
 """
     chomp(s::AbstractString)
@@ -108,14 +96,14 @@ julia> chomp("Hello\\n")
 ```
 """
 function chomp(s::AbstractString)
-    i = endof(s)
+    i = lastindex(s)
     (i < 1 || s[i] != '\n') && (return SubString(s, 1, i))
     j = prevind(s,i)
     (j < 1 || s[j] != '\r') && (return SubString(s, 1, j))
     return SubString(s, 1, prevind(s,j))
 end
 function chomp(s::String)
-    i = endof(s)
+    i = lastindex(s)
     if i < 1 || codeunit(s,i) != 0x0a
         SubString(s, 1, i)
     elseif i < 2 || codeunit(s,i-1) != 0x0d
@@ -146,14 +134,9 @@ julia> lstrip(a)
 ```
 """
 function lstrip(s::AbstractString, chars::Chars=_default_delims)
-    e = endof(s)
-    i = start(s)
-    while !done(s,i)
-        c, j = next(s,i)
-        if !(c in chars)
-            return SubString(s, i, e)
-        end
-        i = j
+    e = lastindex(s)
+    for (i, c) in pairs(s)
+        !(c in chars) && return SubString(s, i, e)
     end
     SubString(s, e+1, e)
 end
@@ -177,12 +160,8 @@ julia> rstrip(a)
 ```
 """
 function rstrip(s::AbstractString, chars::Chars=_default_delims)
-    i = endof(s)
-    while 1 ≤ i
-        c = s[i]
-        j = prevind(s, i)
-        c in chars || return SubString(s, 1:i)
-        i = j
+    for (i, c) in Iterators.reverse(pairs(s))
+        c in chars || return SubString(s, 1, i)
     end
     SubString(s, 1, 0)
 end
@@ -297,8 +276,8 @@ split(str::T, splitter::Char;
 
 function _split(str::AbstractString, splitter, limit::Integer, keep_empty::Bool, strs::Array)
     i = start(str)
-    n = endof(str)
-    r = coalesce(findfirst(splitter,str), 0)
+    n = lastindex(str)
+    r = coalesce(findfirst(splitter,str), i - 1)
     if r != 0:-1
         j, k = first(r), nextind(str,last(r))
         while 0 < j <= n && length(strs) != limit-1
@@ -364,8 +343,8 @@ rsplit(str::T, splitter::Char;
 
 function _rsplit(str::AbstractString, splitter, limit::Integer, keep_empty::Bool, strs::Array)
     i = start(str)
-    n = endof(str)
-    r = coalesce(findlast(splitter, str), 0)
+    n = lastindex(str)
+    r = coalesce(findlast(splitter, str), i - 1)
     j = first(r)-1
     k = last(r)
     while((0 <= j < n) && (length(strs) != limit-1))
@@ -389,19 +368,22 @@ _replace(io, repl::Function, str, r, pattern) =
 
 replace(str::String, pat_repl::Pair{Char}; count::Integer=typemax(Int)) =
     replace(str, equalto(first(pat_repl)) => last(pat_repl); count=count)
-replace(str::String, pat_repl::Pair{<:Union{Tuple{Vararg{Char}},AbstractVector{Char},Set{Char}}};
+
+replace(str::String, pat_repl::Pair{<:Union{Tuple{Vararg{Char}},
+                                            AbstractVector{Char},Set{Char}}};
         count::Integer=typemax(Int)) =
-    replace(str, occursin(first(pat_repl)) => last(pat_repl), count)
+    replace(str, occursin(first(pat_repl)) => last(pat_repl), count=count)
+
 function replace(str::String, pat_repl::Pair; count::Integer=typemax(Int))
     pattern, repl = pat_repl
     count == 0 && return str
     count < 0 && throw(DomainError(count, "`count` must be non-negative."))
     n = 1
-    e = endof(str)
-    i = a = start(str)
+    e = lastindex(str)
+    i = a = firstindex(str)
     r = coalesce(findnext(pattern,str,i), 0)
     j, k = first(r), last(r)
-    out = IOBuffer(StringVector(floor(Int, 1.2sizeof(str))), true, true)
+    out = IOBuffer(StringVector(floor(Int, 1.2sizeof(str))), read=true, write=true)
     out.size = 0
     out.ptr = 1
     while j != 0
@@ -500,7 +482,7 @@ hex2bytes(s::Union{String,AbstractVector{UInt8}}) = hex2bytes!(Vector{UInt8}(uni
 _firstbyteidx(s::String) = 1
 _firstbyteidx(s::AbstractVector{UInt8}) = first(eachindex(s))
 _lastbyteidx(s::String) = sizeof(s)
-_lastbyteidx(s::AbstractVector{UInt8}) = endof(s)
+_lastbyteidx(s::AbstractVector{UInt8}) = lastindex(s)
 
 """
     hex2bytes!(d::AbstractVector{UInt8}, s::Union{String,AbstractVector{UInt8}})

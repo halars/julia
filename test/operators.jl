@@ -1,5 +1,7 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
+using Random: randstring
+
 @test ifelse(true, 1, 2) == 1
 @test ifelse(false, 1, 2) == 2
 
@@ -45,8 +47,8 @@ p = 1=>:foo
 @test last(p)  == :foo
 @test first(reverse(p)) == :foo
 @test last(reverse(p))  == 1
-@test endof(p) == 2
-@test p[endof(p)] == p[end] == p[2] == :foo
+@test lastindex(p) == 2
+@test p[lastindex(p)] == p[end] == p[2] == :foo
 
 @test (|)(2) == 2
 @test xor(2) == 2

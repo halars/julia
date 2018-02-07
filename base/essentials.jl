@@ -1,6 +1,6 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
-using Core: CodeInfo
+using Core: CodeInfo, SimpleVector
 
 const Callable = Union{Function,Type}
 
@@ -106,35 +106,14 @@ julia> convert(Rational{Int64}, x)
 6004799503160661//18014398509481984
 ```
 
-If `T` is a collection type and `x` a collection, the result of `convert(T, x)` may alias
-`x`.
+If `T` is a collection type and `x` a collection, the result of
+`convert(T, x)` may alias all or part of `x`.
 ```jldoctest
-julia> x = Int[1,2,3];
+julia> x = Int[1, 2, 3];
 
 julia> y = convert(Vector{Int}, x);
 
 julia> y === x
-true
-```
-Similarly, if `T` is a composite type and `x` a related instance, the result of
-`convert(T, x)` may alias part or all of `x`.
-```jldoctest
-julia> x = sparse(1.0I, 5, 5);
-
-julia> typeof(x)
-SparseMatrixCSC{Float64,Int64}
-
-julia> y = convert(SparseMatrixCSC{Float64,Int64}, x);
-
-julia> z = convert(SparseMatrixCSC{Float32,Int64}, y);
-
-julia> y === x
-true
-
-julia> z === x
-false
-
-julia> z.colptr === x.colptr
 true
 ```
 """
@@ -371,7 +350,7 @@ julia> sizeof(ComplexF64)
 If `T` does not have a specific size, an error is thrown.
 
 ```jldoctest
-julia> sizeof(Base.LinAlg.LU)
+julia> sizeof(AbstractArray)
 ERROR: argument is an abstract type; size is indeterminate
 Stacktrace:
 [...]
@@ -546,7 +525,8 @@ function length(v::SimpleVector)
     @_gc_preserve_end t
     return l
 end
-endof(v::SimpleVector) = length(v)
+firstindex(v::SimpleVector) = 1
+lastindex(v::SimpleVector) = length(v)
 start(v::SimpleVector) = 1
 next(v::SimpleVector,i) = (v[i],i+1)
 done(v::SimpleVector,i) = (length(v) < i)
@@ -640,16 +620,6 @@ struct Val{x}
 end
 
 Val(x) = (@_pure_meta; Val{x}())
-
-# used by keyword arg call lowering
-function vector_any(@nospecialize xs...)
-    n = length(xs)
-    a = Vector{Any}(uninitialized, n)
-    @inbounds for i = 1:n
-        Core.arrayset(false, a, xs[i], i)
-    end
-    a
-end
 
 """
     invokelatest(f, args...; kwargs...)
@@ -785,3 +755,7 @@ Indicate whether `x` is [`missing`](@ref).
 """
 ismissing(::Any) = false
 ismissing(::Missing) = true
+
+function popfirst! end
+function peek end
+

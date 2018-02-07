@@ -1,5 +1,6 @@
 # Install dependencies needed to build the documentation.
 ENV["JULIA_PKGDIR"] = joinpath(@__DIR__, "deps")
+using Pkg
 Pkg.init()
 cp(joinpath(@__DIR__, "REQUIRE"), Pkg.dir("REQUIRE"); remove_destination = true)
 Pkg.update()
@@ -68,12 +69,10 @@ const PAGES = [
         "manual/documentation.md",
         "manual/metaprogramming.md",
         "manual/arrays.md",
-        "manual/linear-algebra.md",
         "manual/missing.md",
         "manual/networking-and-streams.md",
         "manual/parallel-computing.md",
         "manual/dates.md",
-        "manual/interacting-with-julia.md",
         "manual/running-external-programs.md",
         "manual/calling-c-and-fortran-code.md",
         "manual/handling-operating-system-variation.md",
@@ -98,13 +97,11 @@ const PAGES = [
         "base/arrays.md",
         "base/parallel.md",
         "base/multi-threading.md",
-        "base/linalg.md",
         "base/constants.md",
         "base/file.md",
         "base/io-network.md",
         "base/punctuation.md",
         "base/sort.md",
-        "base/pkg.md",
         "base/iterators.md",
         "base/c.md",
         "base/libc.md",
@@ -133,7 +130,6 @@ const PAGES = [
             "devdocs/boundscheck.md",
             "devdocs/locks.md",
             "devdocs/offset-arrays.md",
-            "devdocs/libgit2.md",
             "devdocs/require.md",
             "devdocs/inference.md",
         ],
@@ -152,12 +148,12 @@ end
 
 makedocs(
     build     = joinpath(pwd(), "_build/html/en"),
-    modules   = [Base, Core, BuildSysImg, [Base.root_module(stdlib.stdlib) for stdlib in STDLIB_DOCS]...],
-    clean     = false,
+    modules   = [Base, Core, BuildSysImg, [Base.root_module(Base, stdlib.stdlib) for stdlib in STDLIB_DOCS]...],
+    clean     = true,
     doctest   = "doctest" in ARGS,
     linkcheck = "linkcheck" in ARGS,
     linkcheck_ignore = ["https://bugs.kde.org/show_bug.cgi?id=136779"], # fails to load from nanosoldier?
-    strict    = true,
+    strict    = false,
     checkdocs = :none,
     format    = "pdf" in ARGS ? :latex : :html,
     sitename  = "The Julia Language",
@@ -165,6 +161,7 @@ makedocs(
     analytics = "UA-28835595-6",
     pages     = PAGES,
     html_prettyurls = ("deploy" in ARGS),
+    html_canonical = ("deploy" in ARGS) ? "https://docs.julialang.org/en/stable/" : nothing,
 )
 
 if "deploy" in ARGS

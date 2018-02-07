@@ -30,7 +30,6 @@ Please read the [release notes](NEWS.md) to see what has changed since the last 
   * [Documentation](@ref)
   * [Metaprogramming](@ref)
   * [Multi-dimensional Arrays](@ref man-multi-dim-arrays)
-  * [Linear Algebra](@ref)
   * [Missing Values](@ref missing)
   * [Networking and Streams](@ref)
   * [Parallel Computing](@ref)
@@ -39,7 +38,6 @@ Please read the [release notes](NEWS.md) to see what has changed since the last 
   * [Calling C and Fortran Code](@ref)
   * [Handling Operating System Variation](@ref)
   * [Environment Variables](@ref)
-  * [Interacting With Julia](@ref)
   * [Embedding Julia](@ref)
   * [Packages](@ref)
   * [Profiling](@ref)
@@ -63,7 +61,6 @@ Please read the [release notes](NEWS.md) to see what has changed since the last 
   * [Distributed Computing](@ref)
   * [Multi-Threading](@ref)
   * [Shared Arrays](@ref)
-  * [Linear Algebra](@ref)
   * [Constants](@ref lib-constants)
   * [Filesystem](@ref)
   * [I/O and Network](@ref)
@@ -79,20 +76,23 @@ Please read the [release notes](NEWS.md) to see what has changed since the last 
 
 ## Standard Library
 
+  * [The Julia REPL](@ref)
   * [Base64](@ref)
   * [CRC32c](@ref)
   * [Dates and Time](@ref stdlib-dates)
   * [Delimited Files](@ref)
   * [Distributed Computing](@ref)
   * [File Events](@ref lib-filewatching)
-  * [Sparse Arrays](@ref)
   * [Iterative Eigensolvers](@ref lib-itereigen)
   * [Memory-mapped I/O](@ref)
   * [Printf](@ref)
   * [Profiling](@ref lib-profiling)
+  * [Random Numbers](@ref)
   * [Shared Arrays](@ref)
-  * [Unit Testing](@ref)
+  * [Linear Algebra](@ref)
+  * [Sparse Arrays](@ref)
   * [Unicode](@ref)
+  * [Unit Testing](@ref)
 
 ## Developer Documentation
 
@@ -115,7 +115,6 @@ Please read the [release notes](NEWS.md) to see what has changed since the last 
       * [Bounds checking](@ref)
       * [Proper maintenance and care of multi-threading locks](@ref)
       * [Arrays with custom indices](@ref)
-      * [Base.LibGit2](@ref)
       * [Module loading](@ref)
       * [Inference](@ref)
   * Developing/debugging Julia's C code

@@ -1,5 +1,7 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
+using Serialization
+
 import Base.MPFR
 @testset "constructors" begin
     setprecision(53) do
@@ -289,6 +291,8 @@ end
         end
         # BigInt division
         @test a / BigInt(2) == c
+        # inv
+        @test inv(x) == one(x)/x == 1/x == x^-1 == Clong(1)/x
     end
     #^
     x = BigFloat(12)
@@ -880,8 +884,10 @@ end
 end
 
 # issue #22758
-setprecision(2_000_000) do
-    @test abs(sin(big(pi)/6) - 0.5) < ldexp(big(1.0),-1_999_000)
+if MPFR.version() > v"3.1.5" || "r11590" in MPFR.patches()
+    setprecision(2_000_000) do
+        @test abs(sin(big(pi)/6) - 0.5) < ldexp(big(1.0),-1_999_000)
+    end
 end
 
 @testset "show BigFloat" begin
@@ -917,3 +923,5 @@ end
         @test to_string(big"-1.0") == "-1.0"
     end
 end
+
+@test beta(big(1.0),big(1.2)) ≈ beta(1.0,1.2) rtol=4*eps()

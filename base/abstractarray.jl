@@ -14,7 +14,7 @@ AbstractArray
 convert(::Type{T}, a::T) where {T<:AbstractArray} = a
 convert(::Type{T}, a::AbstractArray) where {T<:AbstractArray} = T(a)
 
-if module_name(@__MODULE__) === :Base  # avoid method overwrite
+if nameof(@__MODULE__) === :Base  # avoid method overwrite
 # catch undefined constructors before the deprecation kicks in
 # TODO: remove when deprecation is removed
 function (::Type{T})(arg) where {T<:AbstractArray}
@@ -146,7 +146,7 @@ ndims(::Type{T}) where {T<:AbstractArray} = ndims(supertype(T))
 
 Return the number of elements in the collection.
 
-Use [`endof`](@ref) to get the last valid index of an indexable collection.
+Use [`lastindex`](@ref) to get the last valid index of an indexable collection.
 
 # Examples
 ```jldoctest
@@ -165,17 +165,32 @@ _length(A::AbstractArray) = (@_inline_meta; prod(map(unsafe_length, axes(A)))) #
 _length(A) = (@_inline_meta; length(A))
 
 """
-    endof(collection) -> Integer
+    lastindex(collection) -> Integer
 
 Return the last index of the collection.
 
 # Examples
 ```jldoctest
-julia> endof([1,2,4])
+julia> lastindex([1,2,4])
 3
 ```
 """
-endof(a::AbstractArray) = (@_inline_meta; last(linearindices(a)))
+lastindex(a::AbstractArray) = (@_inline_meta; last(linearindices(a)))
+lastindex(a::AbstractArray, n) = (@_inline_meta; last(axes(a, n)))
+
+"""
+    firstindex(collection) -> Integer
+
+Return the first index of the collection.
+
+# Examples
+```jldoctest
+julia> firstindex([1,2,4])
+1
+```
+"""
+firstindex(a::AbstractArray) = (@_inline_meta; first(linearindices(a)))
+firstindex(a::AbstractArray, n) = (@_inline_meta; first(axes(a, n)))
 
 first(a::AbstractArray) = a[first(eachindex(a))]
 
@@ -204,7 +219,7 @@ end
     last(coll)
 
 Get the last element of an ordered collection, if it can be computed in O(1) time. This is
-accomplished by calling [`endof`](@ref) to get the last index. Return the end
+accomplished by calling [`lastindex`](@ref) to get the last index. Return the end
 point of an `AbstractRange` even if it is empty.
 
 # Examples
@@ -801,39 +816,31 @@ range to efficiently index into the array with indices specified for every dimen
 other iterables, including strings and dictionaries, return an iterator object
 supporting arbitrary index types (e.g. unevenly spaced or non-integer indices).
 
-Example for a sparse 2-d array:
-
-```jldoctest
-julia> A = sparse([1, 1, 2], [1, 3, 1], [1, 2, -5])
-2×3 SparseMatrixCSC{Int64,Int64} with 3 stored entries:
-  [1, 1]  =  1
-  [2, 1]  =  -5
-  [1, 3]  =  2
-
-julia> for iter in eachindex(A)
-           @show iter.I[1], iter.I[2]
-           @show A[iter]
-       end
-(iter.I[1], iter.I[2]) = (1, 1)
-A[iter] = 1
-(iter.I[1], iter.I[2]) = (2, 1)
-A[iter] = -5
-(iter.I[1], iter.I[2]) = (1, 2)
-A[iter] = 0
-(iter.I[1], iter.I[2]) = (2, 2)
-A[iter] = 0
-(iter.I[1], iter.I[2]) = (1, 3)
-A[iter] = 2
-(iter.I[1], iter.I[2]) = (2, 3)
-A[iter] = 0
-```
-
 If you supply more than one `AbstractArray` argument, `eachindex` will create an
 iterable object that is fast for all arguments (a `UnitRange`
 if all inputs have fast linear indexing, a [`CartesianIndices`](@ref)
 otherwise).
 If the arrays have different sizes and/or dimensionalities, `eachindex` will return an
 iterable that spans the largest range along each dimension.
+
+# Examples
+```jldoctest
+julia> A = [1 2; 3 4];
+
+julia> for i in eachindex(A) # linear indexing
+           println(i)
+       end
+1
+2
+3
+4
+
+julia> for i in eachindex(view(A, 1:2, 1:1)) # Cartesian indexing
+           println(i)
+       end
+CartesianIndex(1, 1)
+CartesianIndex(2, 1)
+```
 """
 eachindex(A::AbstractArray) = (@_inline_meta(); eachindex(IndexStyle(A), A))
 
@@ -1052,7 +1059,7 @@ get(A::AbstractArray, I::Dims, default) = checkbounds(Bool, A, I...) ? A[I...] :
 
 function get!(X::AbstractVector{T}, A::AbstractVector, I::Union{AbstractRange,AbstractVector{Int}}, default::T) where T
     # 1d is not linear indexing
-    ind = find(occursin(indices1(A)), I)
+    ind = findall(occursin(indices1(A)), I)
     X[ind] = A[I[ind]]
     Xind = indices1(X)
     X[first(Xind):first(ind)-1] = default
@@ -1061,7 +1068,7 @@ function get!(X::AbstractVector{T}, A::AbstractVector, I::Union{AbstractRange,Ab
 end
 function get!(X::AbstractArray{T}, A::AbstractArray, I::Union{AbstractRange,AbstractVector{Int}}, default::T) where T
     # Linear indexing
-    ind = find(occursin(1:length(A)), I)
+    ind = findall(occursin(1:length(A)), I)
     X[ind] = A[I[ind]]
     X[1:first(ind)-1] = default
     X[last(ind)+1:length(X)] = default
@@ -1167,10 +1174,10 @@ function typed_hcat(::Type{T}, A::AbstractVecOrMat...) where T
     return B
 end
 
-vcat(A::AbstractMatrix...) = typed_vcat(promote_eltype(A...), A...)
-vcat(A::AbstractMatrix{T}...) where {T} = typed_vcat(T, A...)
+vcat(A::AbstractVecOrMat...) = typed_vcat(promote_eltype(A...), A...)
+vcat(A::AbstractVecOrMat{T}...) where {T} = typed_vcat(T, A...)
 
-function typed_vcat(::Type{T}, A::AbstractMatrix...) where T
+function typed_vcat(::Type{T}, A::AbstractVecOrMat...) where T
     nargs = length(A)
     nrows = sum(a->size(a, 1), A)::Int
     ncols = size(A[1], 2)
@@ -1959,7 +1966,7 @@ end
 
 function hash(a::AbstractArray{T}, h::UInt) where T
     # O(1) hashing for types with regular step
-    if isa(a, AbstractRange) && isa(TypeRangeStep(a), RangeStepRegular)
+    if isa(a, AbstractRange) && isa(RangeStepStyle(a), RangeStepRegular)
         return hash_range(a, h)
     end
 
@@ -1985,7 +1992,7 @@ function hash(a::AbstractArray{T}, h::UInt) where T
             # to a range with more than two elements because more extreme values
             # cannot be represented. We must still hash the two first values as a
             # range since they can always be considered as such (in a wider type)
-            if isconcrete(T)
+            if isconcretetype(T)
                 try
                     step = x2 - x1
                 catch err
