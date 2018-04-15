@@ -16,7 +16,7 @@ bitcheck(x) = true
 function check_bitop_call(ret_type, func, args...; kwargs...)
     r1 = func(args...; kwargs...)
     r2 = func(map(x->(isa(x, BitArray) ? Array(x) : x), args)...; kwargs...)
-    ret_type ≢ nothing && !isa(r1, ret_type) && @show ret_type, r1
+    ret_type ≢ nothing && !isa(r1, ret_type) && @show ret_type, typeof(r1)
     ret_type ≢ nothing && @test isa(r1, ret_type)
     @test tc(r1, r2)
     @test isequal(r1, ret_type ≡ nothing ? r2 : r2)
@@ -1412,8 +1412,8 @@ timesofar("cat")
     @check_bit_operation diff(b1) Vector{Int}
 
     b1 = bitrand(n1, n2)
-    @check_bit_operation diff(b1, 1) Matrix{Int}
-    @check_bit_operation diff(b1, 2) Matrix{Int}
+    @check_bit_operation diff(b1, dims=1) Matrix{Int}
+    @check_bit_operation diff(b1, dims=2) Matrix{Int}
 
     b1 = bitrand(n1, n1)
     @check_bit_operation svd(b1)

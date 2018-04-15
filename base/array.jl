@@ -85,7 +85,6 @@ UInt8
 ```
 """
 eltype(::Type) = Any
-eltype(::Type{Any}) = Any
 eltype(::Type{Bottom}) = throw(ArgumentError("Union{} does not have elements"))
 eltype(x) = eltype(typeof(x))
 
@@ -327,6 +326,9 @@ function fill!(a::Array{T}, x) where T<:Union{Integer,AbstractFloat}
     return a
 end
 
+to_dim(d::Integer) = d
+to_dim(d::OneTo) = last(d)
+
 """
     fill(x, dims)
 
@@ -347,8 +349,10 @@ julia> fill(1.0, (5,5))
 If `x` is an object reference, all elements will refer to the same object. `fill(Foo(),
 dims)` will return an array filled with the result of evaluating `Foo()` once.
 """
-fill(v, dims::Dims)       = fill!(Array{typeof(v)}(undef, dims), v)
-fill(v, dims::Integer...) = fill!(Array{typeof(v)}(undef, dims...), v)
+fill(v, dims::DimOrInd...) = fill(v, dims)
+fill(v, dims::NTuple{N, Union{Integer, OneTo}}) where {N} = fill(v, map(to_dim, dims))
+fill(v, dims::NTuple{N, Integer}) where {N} = fill!(Array{typeof(v),N}(undef, dims), v)
+fill(v, dims::Tuple{}) = fill!(Array{typeof(v),0}(undef, dims), v)
 
 """
     zeros([T=Float64,] dims...)
@@ -392,10 +396,12 @@ function ones end
 
 for (fname, felt) in ((:zeros, :zero), (:ones, :one))
     @eval begin
-        $fname(::Type{T}, dims::NTuple{N, Any}) where {T, N} = fill!(Array{T,N}(undef, convert(Dims, dims)::Dims), $felt(T))
-        $fname(dims::Tuple) = ($fname)(Float64, dims)
-        $fname(::Type{T}, dims...) where {T} = $fname(T, dims)
-        $fname(dims...) = $fname(dims)
+        $fname(dims::DimOrInd...) = $fname(dims)
+        $fname(::Type{T}, dims::DimOrInd...) where {T} = $fname(T, dims)
+        $fname(dims::Tuple{Vararg{DimOrInd}}) = $fname(Float64, dims)
+        $fname(::Type{T}, dims::NTuple{N, Union{Integer, OneTo}}) where {T,N} = $fname(T, map(to_dim, dims))
+        $fname(::Type{T}, dims::NTuple{N, Integer}) where {T,N} = fill!(Array{T,N}(undef, map(to_dim, dims)), $felt(T))
+        $fname(::Type{T}, dims::Tuple{}) where {T} = fill!(Array{T}(undef), $felt(T))
     end
 end
 
