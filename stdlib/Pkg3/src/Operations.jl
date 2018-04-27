@@ -106,7 +106,7 @@ function collect_fixed!(ctx::Context, pkgs::Vector{PackageSpec}, uuid_to_name::D
 
         uuid_to_pkg[pkg.uuid] = pkg
         uuid_to_name[pkg.uuid] = pkg.name
-        found_project = collect_project!(pkg, path, fix_deps_map)
+        found_project = collect_project!(ctx, pkg, path, fix_deps_map)
         if !found_project
             collect_require!(ctx, pkg, path, fix_deps_map)
         end
@@ -127,7 +127,7 @@ function collect_fixed!(ctx::Context, pkgs::Vector{PackageSpec}, uuid_to_name::D
     return fixed
 end
 
-function collect_project!(pkg::PackageSpec, path::String, fix_deps_map::Dict{UUID,Vector{PackageSpec}})
+function collect_project!(ctx::Context, pkg::PackageSpec, path::String, fix_deps_map::Dict{UUID,Vector{PackageSpec}})
     project_file = joinpath(path, "Project.toml")
     fix_deps_map[pkg.uuid] = valtype(fix_deps_map)()
     !isfile(project_file) && return false
@@ -137,7 +137,12 @@ function collect_project!(pkg::PackageSpec, path::String, fix_deps_map::Dict{UUI
         deppkg = PackageSpec(deppkg_name, UUID(uuid), vspec)
         push!(fix_deps_map[pkg.uuid], deppkg)
     end
-    pkg.version = VersionNumber(get(project, "version", "0.0"))
+    if haskey(project, "version")
+        pkg.version = VersionNumber(project["version"])
+    else
+        @warn "project file for $(pkg.name) is missing a `version` entry"
+        set_maximum_version_registry!(ctx.env, pkg)
+    end
     return true
 end
 
@@ -753,9 +758,8 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
         end
         write_env(localctx, display_diff = false)
         will_resolve && build_versions(localctx, new)
-        withenv("JULIA_LOAD_PATH" => joinpath(tmpdir)) do
-            f()
-        end
+        sep = Sys.iswindows() ? ';' : ':'
+        withenv(f, "JULIA_LOAD_PATH" => "$tmpdir$sep$(Types.stdlib_dir())")
     end
 end
 
@@ -823,7 +827,6 @@ function build_versions(ctx::Context, uuids::Vector{UUID}; might_need_to_resolve
         log_file = splitext(build_file)[1] * ".log"
         printpkgstyle(ctx, :Building,
             rpad(name * " ", max_name + 1, "─"), "→ ", Types.pathrepr(ctx, log_file))
-
         code = """
             empty!(Base.DEPOT_PATH)
             append!(Base.DEPOT_PATH, $(repr(map(abspath, DEPOT_PATH))))
@@ -958,20 +961,24 @@ function up(ctx::Context, pkgs::Vector{PackageSpec})
         pkg.version isa UpgradeLevel || continue
         level = pkg.version
         info = manifest_info(ctx.env, pkg.uuid)
-        if haskey(info, "repo-url")
+        if info !== nothing && haskey(info, "repo-url")
             pkg.repo = Types.GitRepo(info["repo-url"], info["repo-rev"])
             new = handle_repos_add!(ctx, [pkg]; upgrade_or_add = (level == UPLEVEL_MAJOR))
             append!(new_git, new)
         else
-            ver = VersionNumber(info["version"])
-            if level == UPLEVEL_FIXED
-                pkg.version = VersionNumber(info["version"])
+            if info !== nothing
+                ver = VersionNumber(info["version"])
+                if level == UPLEVEL_FIXED
+                    pkg.version = VersionNumber(info["version"])
+                else
+                    r = level == UPLEVEL_PATCH ? VersionRange(ver.major, ver.minor) :
+                        level == UPLEVEL_MINOR ? VersionRange(ver.major) :
+                        level == UPLEVEL_MAJOR ? VersionRange() :
+                            error("unexpected upgrade level: $level")
+                    pkg.version = VersionSpec(r)
+                end
             else
-                r = level == UPLEVEL_PATCH ? VersionRange(ver.major, ver.minor) :
-                    level == UPLEVEL_MINOR ? VersionRange(ver.major) :
-                    level == UPLEVEL_MAJOR ? VersionRange() :
-                        error("unexpected upgrade level: $level")
-                pkg.version = VersionSpec(r)
+                pkg.version = VersionSpec()
             end
         end
     end

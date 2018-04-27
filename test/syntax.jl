@@ -939,8 +939,8 @@ g21054(>:) = >:2
 @test g21054(-) == -2
 
 # issue #21168
-@test Meta.lower(Main, :(a.[1])) == Expr(:error, "invalid syntax a.[1]")
-@test Meta.lower(Main, :(a.{1})) == Expr(:error, "invalid syntax a.{1}")
+@test Meta.lower(Main, :(a.[1])) == Expr(:error, "invalid syntax \"a.[1]\"")
+@test Meta.lower(Main, :(a.{1})) == Expr(:error, "invalid syntax \"a.{1}\"")
 
 # Issue #21225
 let abstr = Meta.parse("abstract type X end")
@@ -1386,3 +1386,36 @@ end
 
 # issue #26717
 @test Meta.lower(@__MODULE__, :( :(:) = 2 )) == Expr(:error, "invalid assignment location \":(:)\"")
+
+# issue #17781
+let ex = Meta.lower(@__MODULE__, Meta.parse("
+    A = function (s, o...)
+        f(a, b) do
+        end
+    end,
+    B = function (s, o...)
+        f(a, b) do
+        end
+    end"))
+    @test isa(ex, Expr) && ex.head === :error
+    @test ex.args[1] == """
+invalid assignment location "function (s, o...)
+    # none, line 3
+    f(a, b) do
+        # none, line 4
+    end
+end\""""
+end
+
+# issue #26739
+@test_throws ErrorException("syntax: invalid syntax \"sin.[1]\"") eval(@__MODULE__, :(sin.[1]))
+
+# issue #26873
+f26873 = 0
+try
+    include_string(@__MODULE__, """f26873."a" """)
+    @test false
+catch e
+    @test e isa LoadError
+    @test e.error isa MethodError
+end

@@ -615,9 +615,10 @@ static jl_code_info_t *expr_to_code_info(jl_value_t *expr)
     jl_gc_wb(src, src->slotflags);
     src->ssavaluetypes = jl_box_long(0);
     jl_gc_wb(src, src->ssavaluetypes);
-    src->signature_for_inference_heuristics = jl_nothing;
+    src->method_for_inference_limit_heuristics = jl_nothing;
     src->codelocs = jl_nothing;
     src->linetable = jl_nothing;
+    src->ssaflags = jl_alloc_array_1d(jl_array_uint8_type, 0);
 
     JL_GC_POP();
     return src;
@@ -640,9 +641,8 @@ jl_value_t *jl_toplevel_eval_flex(jl_module_t *m, jl_value_t *e, int fast, int e
             jl_error("syntax: malformed \".\" expression");
         jl_value_t *lhs = jl_exprarg(ex, 0);
         jl_value_t *rhs = jl_exprarg(ex, 1);
-        // ('.' f (tuple args...)) is a broadcast instead, which doesn't
-        // go through this fast path.
-        if (!jl_is_expr(rhs) || ((jl_expr_t*)rhs)->head != tuple_sym)
+        // only handle `a.b` syntax here
+        if (jl_is_quotenode(rhs) && jl_is_symbol(jl_fieldref(rhs,0)))
             return jl_eval_dot_expr(m, lhs, rhs, fast);
     }
     if (ptls->in_pure_callback) {

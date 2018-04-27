@@ -82,11 +82,12 @@ function depwarn(msg, funcsym)
         _id=(frame,funcsym),
         _group=:depwarn,
         caller=caller,
-        maxlog=1
+        maxlog=funcsym === nothing ? nothing : 1
     )
     nothing
 end
 
+firstcaller(bt::Vector, ::Nothing) = Ptr{Cvoid}(0), StackTraces.UNKNOWN
 firstcaller(bt::Vector, funcsym::Symbol) = firstcaller(bt, (funcsym,))
 function firstcaller(bt::Vector, funcsyms)
     # Identify the calling line
@@ -1114,6 +1115,10 @@ end
 @deprecate indices(a) axes(a)
 @deprecate indices(a, d) axes(a, d)
 
+# And similar _indices names in Broadcast
+@eval Broadcast Base.@deprecate_binding broadcast_indices broadcast_axes true
+@eval Broadcast Base.@deprecate_binding check_broadcast_indices check_broadcast_axes false
+
 # PR #25046
 export reload, workspace
 reload(name::AbstractString) = error("`reload($(repr(name)))` is discontinued, consider Revise.jl for an alternative workflow.")
@@ -1586,6 +1591,9 @@ end
 @deprecate ones(::Type{T}, dims::NTuple{N, Any}) where {T, N}   ones(T, convert(Dims, dims))
 @deprecate ones(dims::Tuple)                                    ones(convert(Dims, dims))
 
+# Deprecate varargs size: PR #26862
+@deprecate size(x, d1::Integer, d2::Integer) (size(x, d1), size(x, d2))
+@deprecate size(x, d1::Integer, d2::Integer, dx::Integer...) map(dim->size(x, dim), (d1, d2, dx...))
 
 @deprecate showcompact(x) show(IOContext(stdout, :compact => true), x)
 @deprecate showcompact(io, x) show(IOContext(io, :compact => true), x)
@@ -1608,6 +1616,9 @@ end
 # The `keep` argument in `split` and `rpslit` has been renamed to `keepempty`.
 # To remove this deprecation, remove the `keep` argument from the function signatures as well as
 # the internal logic that deals with the renaming. These live in base/strings/util.jl.
+
+# when this is removed, `isbitstype(typeof(x))` can be replaced with `isbits(x)`
+@deprecate isbits(@nospecialize(t::Type)) isbitstype(t)
 
 # END 0.7 deprecations
 
