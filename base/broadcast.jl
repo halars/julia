@@ -84,7 +84,7 @@ Broadcast styles created this way lose track of dimensionality; if keeping track
 for your type, you should create your own custom [`Broadcast.AbstractArrayStyle`](@ref).
 """
 struct ArrayStyle{A<:AbstractArray} <: AbstractArrayStyle{Any} end
-(::Type{<:ArrayStyle{A}})(::Val) where A = A()
+ArrayStyle{A}(::Val) where A = ArrayStyle{A}()
 
 """
 `Broadcast.DefaultArrayStyle{N}()` is a [`BroadcastStyle`](@ref) indicating that an object
@@ -95,7 +95,8 @@ overrides from other `broadcast` arguments the resulting output type is `Array`.
 When there are multiple inputs to `broadcast`, `DefaultArrayStyle` "loses" to any other [`Broadcast.ArrayStyle`](@ref).
 """
 struct DefaultArrayStyle{N} <: AbstractArrayStyle{N} end
-(::Type{<:DefaultArrayStyle})(::Val{N}) where N = DefaultArrayStyle{N}()
+DefaultArrayStyle(::Val{N}) where N = DefaultArrayStyle{N}()
+DefaultArrayStyle{M}(::Val{N}) where {N,M} = DefaultArrayStyle{N}()
 const DefaultVectorStyle = DefaultArrayStyle{1}
 const DefaultMatrixStyle = DefaultArrayStyle{2}
 BroadcastStyle(::Type{<:AbstractArray{T,N}}) where {T,N} = DefaultArrayStyle{N}()
@@ -108,6 +109,7 @@ BroadcastStyle(::Type{T}) where {T} = DefaultArrayStyle{ndims(T)}()
 # produced by `DefaultArrayStyle`, `ArrayConflict` "poisons" the BroadcastStyle so that
 # 3 or more arguments still return an `ArrayConflict`.
 struct ArrayConflict <: AbstractArrayStyle{Any} end
+ArrayConflict(::Val) = ArrayConflict()
 
 ### Binary BroadcastStyle rules
 """
@@ -798,7 +800,7 @@ preprocess_args(dest, args::Tuple{}) = ()
 @inline function copyto!(dest::AbstractArray, bc::Broadcasted{Nothing})
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     # Performance optimization: broadcast!(identity, dest, A) is equivalent to copyto!(dest, A) if indices match
-    if bc.f === identity && bc.args isa Tuple{<:AbstractArray} # only a single input argument to broadcast!
+    if bc.f === identity && bc.args isa Tuple{AbstractArray} # only a single input argument to broadcast!
         A = bc.args[1]
         if axes(dest) == axes(A)
             return copyto!(dest, A)
@@ -830,7 +832,7 @@ end
         end
     end
     if ind > 1
-        @inbounds tmp[ind:bitcache_size] = false
+        @inbounds tmp[ind:bitcache_size] .= false
         dumpbitcache(destc, cind, tmp)
     end
     return dest
@@ -1105,6 +1107,39 @@ See [`broadcast_getindex`](@ref) for examples of the treatment of `inds`.
         A
     end
 end
+
+## In specific instances, we can broadcast masked BitArrays whole chunks at a time
+# Very intentionally do not support much functionality here: scalar indexing would be O(n)
+struct BitMaskedBitArray{N,M}
+    parent::BitArray{N}
+    mask::BitArray{M}
+    BitMaskedBitArray{N,M}(parent, mask) where {N,M} = new(parent, mask)
+end
+@inline function BitMaskedBitArray(parent::BitArray{N}, mask::BitArray{M}) where {N,M}
+    @boundscheck checkbounds(parent, mask)
+    BitMaskedBitArray{N,M}(parent, mask)
+end
+Base.@propagate_inbounds dotview(B::BitArray, i::BitArray) = BitMaskedBitArray(B, i)
+Base.show(io::IO, B::BitMaskedBitArray) = foreach(arg->show(io, arg), (typeof(B), (B.parent, B.mask)))
+# Override materialize! to prevent the BitMaskedBitArray from escaping to an overrideable method
+@inline materialize!(B::BitMaskedBitArray, bc::Broadcasted{<:Any,<:Any,typeof(identity),Tuple{Bool}}) = fill!(B, bc.args[1])
+@inline materialize!(B::BitMaskedBitArray, bc::Broadcasted{<:Any}) = materialize!(SubArray(B.parent, to_indices(B.parent, (B.mask,))), bc)
+function Base.fill!(B::BitMaskedBitArray, b::Bool)
+    Bc = B.parent.chunks
+    Ic = B.mask.chunks
+    @inbounds if b
+        for i = 1:length(Bc)
+            Bc[i] |= Ic[i]
+        end
+    else
+        for i = 1:length(Bc)
+            Bc[i] &= ~Ic[i]
+        end
+    end
+    return B
+end
+
+
 
 ############################################################
 

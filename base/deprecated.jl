@@ -576,16 +576,18 @@ import .Iterators.enumerate
 
 # issue #5794
 @deprecate map(f, d::T) where {T<:AbstractDict}  T( f(p) for p in pairs(d) )
+# issue #26359 - map over sets
+@deprecate map(f, s::AbstractSet)  Set( f(v) for v in s )
 
 # issue #17086
 @deprecate isleaftype isconcretetype
 @deprecate isabstract isabstracttype
 
 # PR #22932
-@deprecate +(a::Number, b::AbstractArray) broadcast(+, a, b)
-@deprecate +(a::AbstractArray, b::Number) broadcast(+, a, b)
-@deprecate -(a::Number, b::AbstractArray) broadcast(-, a, b)
-@deprecate -(a::AbstractArray, b::Number) broadcast(-, a, b)
+@deprecate +(a::Number, b::AbstractArray) a .+ b
+@deprecate +(a::AbstractArray, b::Number) a .+ b
+@deprecate -(a::Number, b::AbstractArray) a .- b
+@deprecate -(a::AbstractArray, b::Number) a .- b
 
 @deprecate(ind2sub(dims::NTuple{N,Integer}, idx::CartesianIndex{N}) where N, Tuple(idx))
 
@@ -1490,6 +1492,27 @@ function slicedim(A::AbstractVector, d::Integer, i::Number)
         copy(selectdim(A, d, i))
     end
 end
+
+# PR #26347: Deprecate implicit scalar broadcasting in setindex!
+_axes(::Ref) = ()
+_axes(x) = axes(x)
+function deprecate_scalar_setindex_broadcast_message(v, I...)
+    value = (_axes(Base.Broadcast.broadcastable(v)) == () ? "x" : "(x,)")
+    "using `A[I...] = x` to implicitly broadcast `x` across many locations is deprecated. Use `A[I...] .= $value` instead."
+end
+deprecate_scalar_setindex_broadcast_message(v, ::Colon, ::Vararg{Colon}) =
+    "using `A[:] = x` to implicitly broadcast `x` across many locations is deprecated. Use `fill!(A, x)` instead."
+
+function _iterable(v, I...)
+    depwarn(deprecate_scalar_setindex_broadcast_message(v, I...), :setindex!)
+    Iterators.repeated(v)
+end
+function setindex!(B::BitArray, x, I0::Union{Colon,UnitRange{Int}}, I::Union{Int,UnitRange{Int},Colon}...)
+    depwarn(deprecate_scalar_setindex_broadcast_message(x, I0, I...), :setindex!)
+    B[I0, I...] .= (x,)
+    B
+end
+
 
 # PR #26283
 @deprecate contains(haystack, needle) occursin(needle, haystack)

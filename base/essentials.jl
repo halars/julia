@@ -204,13 +204,22 @@ end
 const _va_typename = Vararg.body.body.name
 function isvarargtype(@nospecialize(t))
     t = unwrap_unionall(t)
-    isa(t, DataType) && (t::DataType).name === _va_typename
+    return isa(t, DataType) && (t::DataType).name === _va_typename
 end
 
 isvatuple(t::DataType) = (n = length(t.parameters); n > 0 && isvarargtype(t.parameters[n]))
 function unwrapva(@nospecialize(t))
+    # NOTE: this returns a related type, but it's NOT a subtype of the original tuple
     t2 = unwrap_unionall(t)
-    isvarargtype(t2) ? rewrap_unionall(t2.parameters[1],t) : t
+    return isvarargtype(t2) ? rewrap_unionall(t2.parameters[1], t) : t
+end
+
+function unconstrain_vararg_length(@nospecialize(va))
+    # construct a new Vararg type where its length is unconstrained,
+    # but its element type still captures any dependencies the input
+    # element type may have had on the input length
+    T = unwrap_unionall(va).parameters[1]
+    return rewrap_unionall(Vararg{T}, va)
 end
 
 typename(a) = error("typename does not apply to this type")
@@ -218,7 +227,8 @@ typename(a::DataType) = a.name
 function typename(a::Union)
     ta = typename(a.a)
     tb = typename(a.b)
-    ta === tb ? tb : error("typename does not apply to unions whose components have different typenames")
+    ta === tb || error("typename does not apply to unions whose components have different typenames")
+    return tb
 end
 typename(union::UnionAll) = typename(union.body)
 
@@ -533,6 +543,7 @@ lastindex(v::SimpleVector) = length(v)
 start(v::SimpleVector) = 1
 next(v::SimpleVector,i) = (v[i],i+1)
 done(v::SimpleVector,i) = (length(v) < i)
+eltype(::Type{SimpleVector}) = Any
 keys(v::SimpleVector) = OneTo(length(v))
 isempty(v::SimpleVector) = (length(v) == 0)
 axes(v::SimpleVector) = (OneTo(length(v)),)
