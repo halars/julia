@@ -1085,7 +1085,7 @@ end
 @deprecate_moved sum_kbn "KahanSummation"
 @deprecate_moved cumsum_kbn "KahanSummation"
 
-@deprecate isalnum(c::Char) isalpha(c) || isnumeric(c)
+@deprecate isalnum(c::Char) isletter(c) || isnumeric(c)
 @deprecate isgraph(c::Char) isprint(c) && !isspace(c)
 @deprecate isnumber(c::Char) isnumeric(c)
 
@@ -1496,6 +1496,7 @@ end
 # PR #26347: Deprecate implicit scalar broadcasting in setindex!
 _axes(::Ref) = ()
 _axes(x) = axes(x)
+setindex_shape_check(X::Base.Iterators.Repeated, I...) = nothing
 function deprecate_scalar_setindex_broadcast_message(v, I...)
     value = (_axes(Base.Broadcast.broadcastable(v)) == () ? "x" : "(x,)")
     "using `A[I...] = x` to implicitly broadcast `x` across many locations is deprecated. Use `A[I...] .= $value` instead."
@@ -1579,10 +1580,18 @@ end
 @deprecate_binding OccursIn Base.Fix2{typeof(in)} false
 
 # Remove ambiguous CartesianIndices and LinearIndices constructors that are ambiguous between an axis and an array (#26448)
-@eval IteratorsMD @deprecate CartesianIndices(inds::Vararg{AbstractUnitRange{Int},N}) where {N} CartesianIndices(inds)
-@eval IteratorsMD @deprecate CartesianIndices(inds::Vararg{AbstractUnitRange{<:Integer},N}) where {N} CartesianIndices(inds)
-@eval IteratorsMD @deprecate LinearIndices(inds::Vararg{AbstractUnitRange{Int},N}) where {N} LinearIndices(inds)
-@eval IteratorsMD @deprecate LinearIndices(inds::Vararg{AbstractUnitRange{<:Integer},N}) where {N} LinearIndices(inds)
+@eval IteratorsMD begin
+    import Base: LinearIndices
+    @deprecate CartesianIndices(inds::Vararg{AbstractUnitRange{Int},N}) where {N} CartesianIndices(inds)
+    @deprecate CartesianIndices(inds::Vararg{AbstractUnitRange{<:Integer},N}) where {N} CartesianIndices(inds)
+    @deprecate LinearIndices(inds::Vararg{AbstractUnitRange{Int},N}) where {N} LinearIndices(inds)
+    @deprecate LinearIndices(inds::Vararg{AbstractUnitRange{<:Integer},N}) where {N} LinearIndices(inds)
+    # preserve the case with N = 1 (only needed as long as the above deprecations are here)
+    CartesianIndices(inds::AbstractUnitRange{Int}) = CartesianIndices(axes(inds))
+    CartesianIndices(inds::AbstractUnitRange{<:Integer}) = CartesianIndices(axes(inds))
+    LinearIndices(inds::AbstractUnitRange{Int}) = LinearIndices(axes(inds))
+    LinearIndices(inds::AbstractUnitRange{<:Integer}) = LinearIndices(axes(inds))
+end
 
 # rename uninitialized
 @deprecate_binding uninitialized undef
@@ -1627,6 +1636,9 @@ end
 @deprecate ucfirst uppercasefirst
 @deprecate lcfirst lowercasefirst
 
+# Issue #26932
+@deprecate isalpha isletter
+
 function search(buf::IOBuffer, delim::UInt8)
     Base.depwarn("search(buf::IOBuffer, delim::UInt8) is deprecated: use occursin(delim, buf) or readuntil(buf, delim) instead", :search)
     p = pointer(buf.data, buf.ptr)
@@ -1634,6 +1646,8 @@ function search(buf::IOBuffer, delim::UInt8)
     q == C_NULL && return nothing
     return Int(q-p+1)
 end
+
+@deprecate linearindices(x::AbstractArray) LinearIndices(x)
 
 # PR #26647
 # The `keep` argument in `split` and `rpslit` has been renamed to `keepempty`.

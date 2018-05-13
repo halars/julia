@@ -145,6 +145,20 @@ end
         @test isa(reshape(s, Val(N)), Base.ReshapedArray{Int,N})
     end
 end
+@testset "zero-dimensional reshapes" begin
+    @test reshape([1]) == fill(1)
+    @test reshape([1]) isa Array{Int,0}
+    @test reshape(1:1) == fill(1)
+    @test reshape(1:1) isa Base.ReshapedArray{Int, 0}
+    @test reshape([1], Val(0)) == fill(1)
+    @test reshape([1], Val(0)) isa Array{Int,0}
+    @test reshape(1:1, Val(0)) == fill(1)
+    @test reshape(1:1, Val(0)) isa Base.ReshapedArray{Int, 0}
+    @test_throws DimensionMismatch reshape([1,2])
+    @test_throws DimensionMismatch reshape([1,2], Val(0))
+    @test_throws DimensionMismatch reshape(1:2)
+    @test_throws DimensionMismatch reshape(1:2, Val(0))
+end
 @testset "sizehint!" begin
     A = zeros(40)
     resize!(A, 1)
@@ -337,8 +351,8 @@ end
     @test findall(in([1, 2]), 2) == [1]
     @test findall(in([1, 2]), 3) == []
 
-    rt = Base.return_types(setindex!, Tuple{Array{Int32, 3}, UInt8, Vector{Int}, Int16, UnitRange{Int}})
-    @test length(rt) == 1 && rt[1] == Array{Int32, 3}
+    rt = Base.return_types(setindex!, Tuple{Array{Int32, 3}, Vector{UInt8}, Vector{Int}, Int16, UnitRange{Int}})
+    @test length(rt) == 1 && rt[1] === Array{Int32, 3}
 end
 @testset "construction" begin
     @test typeof(Vector{Int}(undef, 3)) == Vector{Int}
@@ -1328,11 +1342,11 @@ end
 @test I24002.y == [1:10;]
 @test I24002.s1() == 1
 
-@testset "eachindexvalue" begin
+@testset "pairs" begin
     A14 = [11 13; 12 14]
-    @test [a for (a,b) in pairs(IndexLinear(),    A14)] == [1,2,3,4]
+    @test [a for (a,b) in pairs(IndexLinear(),    A14)] == reshape(1:4, 2, 2)
     @test [a for (a,b) in pairs(IndexCartesian(), A14)] == Array(CartesianIndices(axes(A14)))
-    @test [b for (a,b) in pairs(IndexLinear(),    A14)] == [11,12,13,14]
+    @test [b for (a,b) in pairs(IndexLinear(),    A14)] == A14
     @test [b for (a,b) in pairs(IndexCartesian(), A14)] == A14
 end
 

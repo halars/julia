@@ -634,8 +634,10 @@ Library improvements
       other containers, by taking the multiplicity of the arguments into account.
       Use `unique` to get the old behavior.
 
-  * The type `LinearIndices` has been added, providing conversion from
-    cartesian indices to linear indices using the normal indexing operation. ([#24715])
+  * The `linearindices` function has been deprecated in favor of the new
+    `LinearIndices` type, which additionnally provides conversion from
+    cartesian indices to linear indices using the normal indexing operation.
+    ([#24715], [#26775]).
 
   * `IdDict{K,V}` replaces `ObjectIdDict`.  It has type parameters
     like other `AbstractDict` subtypes and its constructors mirror the
@@ -1037,6 +1039,8 @@ Deprecated or removed
     [KahanSummation](https://github.com/JuliaMath/KahanSummation.jl) package ([#24869]).
 
   * `isnumber` has been renamed to `isnumeric` ([#25021]).
+
+  * `isalpha` has been renamed to `isletter` ([#26932]).
 
   * `is_assigned_char` and `normalize_string` have been renamed to `isassigned` and
     `normalize`, and moved to the new `Unicode` standard library module.
@@ -1485,3 +1489,5 @@ Command-line option changes
 [#26442]: https://github.com/JuliaLang/julia/issues/26442
 [#26600]: https://github.com/JuliaLang/julia/issues/26600
 [#26670]: https://github.com/JuliaLang/julia/issues/26670
+[#26775]: https://github.com/JuliaLang/julia/issues/26775
+[#26932]: https://github.com/JuliaLang/julia/issues/26932

@@ -346,7 +346,7 @@ function ir_inline_item!(compact::IncrementalCompact, idx::Int, argexprs::Vector
     return_value
 end
 
-function ir_inline_unionsplit!(compact::IncrementalCompact, idx::Int,
+function ir_inline_unionsplit!(compact::IncrementalCompact, topmod::Module, idx::Int,
                                argexprs::Vector{Any}, linetable::Vector{LineInfoNode},
                                item::UnionSplit, boundscheck::Symbol, todo_bbs::Vector{Tuple{Int, Int}})
     stmt, typ, line = compact.result[idx], compact.result_types[idx], compact.result_lines[idx]
@@ -379,11 +379,22 @@ function ir_inline_unionsplit!(compact::IncrementalCompact, idx::Int,
         insert_node_here!(compact, GotoIfNot(cond, next_cond_bb), Union{}, line)
         bb = next_cond_bb - 1
         finish_current_bb!(compact)
-        # Insert Pi nodes here
+        argexprs′ = argexprs
+        if !isa(case, ConstantCase)
+            argexprs′ = copy(argexprs)
+            for i = 2:length(metharg.parameters)
+                a, m = atype.parameters[i], metharg.parameters[i]
+                isa(argexprs[i], SSAValue) || continue
+                if !(a <: m)
+                    argexprs′[i] = insert_node_here!(compact, PiNode(argexprs′[i], m),
+                                                     m, line)
+                end
+            end
+        end
         if isa(case, InliningTodo)
-            val = ir_inline_item!(compact, idx, argexprs, linetable, case, boundscheck, todo_bbs)
+            val = ir_inline_item!(compact, idx, argexprs′, linetable, case, boundscheck, todo_bbs)
         elseif isa(case, MethodInstance)
-            val = insert_node_here!(compact, Expr(:invoke, case, argexprs...), typ, line)
+            val = insert_node_here!(compact, Expr(:invoke, case, argexprs′...), typ, line)
         else
             case = case::ConstantCase
             val = case.val
@@ -396,7 +407,7 @@ function ir_inline_unionsplit!(compact::IncrementalCompact, idx::Int,
     bb += 1
     # We're now in the fall through block, decide what to do
     if item.fully_covered
-        e = Expr(:call, :error, "fatal error in type inference (type bound)")
+        e = Expr(:call, GlobalRef(topmod, :error), "fatal error in type inference (type bound)")
         e.typ = Union{}
         insert_node_here!(compact, e, Union{}, line)
         insert_node_here!(compact, ReturnNode(), Union{}, line)
@@ -464,7 +475,7 @@ function batch_inline!(todo::Vector{Any}, ir::IRCode, linetable::Vector{LineInfo
                 if isa(item, InliningTodo)
                     compact.ssa_rename[compact.idx-1] = ir_inline_item!(compact, idx, argexprs, linetable, item, boundscheck, state.todo_bbs)
                 elseif isa(item, UnionSplit)
-                    ir_inline_unionsplit!(compact, idx, argexprs, linetable, item, boundscheck, state.todo_bbs)
+                    ir_inline_unionsplit!(compact, _topmod(sv.mod), idx, argexprs, linetable, item, boundscheck, state.todo_bbs)
                 end
                 compact[idx] = nothing
                 refinish && finish_current_bb!(compact)
@@ -576,15 +587,6 @@ function analyze_method!(idx, f, ft, metharg, methsp, method, stmt, atypes, sv, 
         return ConstantCase(quoted(linfo.inferred_const), method, Any[methsp...], metharg)
     end
 
-    # Handle vararg functions
-    isva = na > 0 && method.isva
-    if isva
-        @assert length(atypes) >= na - 1
-        va_type = tuple_tfunc(Tuple{Any[widenconst(atypes[i]) for i in 1:length(atypes)]...})
-        atypes = Any[atypes[1:(na - 1)]..., va_type]
-    end
-
-    # Go see if we already have a pre-inferred result
     res = find_inferred(linfo, atypes, sv)
     res === nothing && return nothing
 
@@ -627,7 +629,8 @@ function analyze_method!(idx, f, ft, metharg, methsp, method, stmt, atypes, sv, 
     #verify_ir(ir2)
 
     return InliningTodo(idx,
-        isva, isinvoke, isapply, na,
+        na > 0 && method.isva,
+        isinvoke, isapply, na,
         method, Any[methsp...], metharg,
         inline_linetable, ir2, linear_inline_eligible(ir2))
 end
@@ -644,6 +647,9 @@ function next(s::SimpleCartesian, state)
     any = false
     for i = 1:length(s.ranges)
         if state[i] < last(s.ranges[i])
+            for j = 1:(i-1)
+                state[j] = first(s.ranges[j])
+            end
             state[i] += 1
             any = true
             break
@@ -693,7 +699,6 @@ function handle_single_case!(ir, stmt, idx, case, isinvoke, todo)
         push!(todo, case::InliningTodo)
     end
 end
-
 
 function assemble_inline_todo!(ir::IRCode, linetable::Vector{LineInfoNode}, sv::OptimizationState)
     # todo = (inline_idx, (isva, isinvoke, isapply, na), method, spvals, inline_linetable, inline_ir, lie)
@@ -761,11 +766,13 @@ function assemble_inline_todo!(ir::IRCode, linetable::Vector{LineInfoNode}, sv::
                 # As a special case, if we can see the tuple() call, look at it's arguments to find
                 # our types. They can be more precise (e.g. f(Bool, A...) would be lowered as
                 # _apply(f, tuple(Bool)::Tuple{DataType}, A), which might not be precise enough to
-                # get a good method match. This pattern is used in the array code a bunch.
+                # get a good method match). This pattern is used in the array code a bunch.
                 if isa(def, SSAValue) && is_tuple_call(ir, ir[def])
                     for tuparg in ir[def].args[2:end]
                         push!(new_atypes, exprtype(tuparg, ir, ir.mod))
                     end
+                elseif isa(def, Argument) && def.n === length(ir.argtypes) && !isempty(sv.result_vargs)
+                    append!(new_atypes, sv.result_vargs)
                 else
                     append!(new_atypes, typ.parameters)
                 end
@@ -861,6 +868,7 @@ function assemble_inline_todo!(ir::IRCode, linetable::Vector{LineInfoNode}, sv::
         # Now, if profitable union split the atypes into dispatch tuples and match the appropriate method
         nu = countunionsplit(atypes)
         if nu != 1 && nu <= sv.params.MAX_UNION_SPLITTING
+            fully_covered = true
             for sig in UnionSplitSignature(atypes)
                 metharg′ = argtypes_to_type(sig)
                 if !isdispatchtuple(metharg′)
