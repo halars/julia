@@ -36,11 +36,11 @@ may be useful. See the manual chapter on [arrays with custom indices](@ref man-c
 ```jldoctest
 julia> A = fill(1, (2,3,4));
 
+julia> size(A)
+(2, 3, 4)
+
 julia> size(A, 2)
 3
-
-julia> size(A, 3, 2)
-(4, 3)
 ```
 """
 size(t::AbstractArray{T,N}, d) where {T,N} = d <= N ? size(t)[d] : 1
@@ -284,9 +284,9 @@ julia> first([1; 2; 3; 4])
 ```
 """
 function first(itr)
-    state = start(itr)
-    done(itr, state) && throw(ArgumentError("collection must be non-empty"))
-    next(itr, state)[1]
+    x = iterate(itr)
+    x === nothing && throw(ArgumentError("collection must be non-empty"))
+    x[1]
 end
 
 """
@@ -635,10 +635,12 @@ emptymutable(itr, ::Type{U}) where {U} = Vector{U}()
 
 function copyto!(dest::AbstractArray, src)
     destiter = eachindex(dest)
-    state = start(destiter)
+    y = iterate(destiter)
     for x in src
-        i, state = next(destiter, state)
-        dest[i] = x
+        y === nothing &&
+            throw(ArgumentError(string("source has fewer elements than required")))
+        dest[y[1]] = x
+        y = iterate(destiter, y[2])
     end
     return dest
 end
@@ -657,25 +659,24 @@ function copyto!(dest::AbstractArray, dstart::Integer, src, sstart::Integer)
     if (sstart < 1)
         throw(ArgumentError(string("source start offset (",sstart,") is < 1")))
     end
-    st = start(src)
+    y = iterate(src)
     for j = 1:(sstart-1)
-        if done(src, st)
+        if y === nothing
             throw(ArgumentError(string("source has fewer elements than required, ",
                                        "expected at least ",sstart,", got ",j-1)))
         end
-        _, st = next(src, st)
+        y = iterate(src, y[2])
     end
-    dn = done(src, st)
-    if dn
+    if y === nothing
         throw(ArgumentError(string("source has fewer elements than required, ",
                                       "expected at least ",sstart,", got ",sstart-1)))
     end
     i = Int(dstart)
-    while !dn
-        val, st = next(src, st)
+    while y != nothing
+        val, st = y
         dest[i] = val
         i += 1
-        dn = done(src, st)
+        y = iterate(src, st)
     end
     return dest
 end
@@ -690,18 +691,19 @@ function copyto!(dest::AbstractArray, dstart::Integer, src, sstart::Integer, n::
         sstart < 1 && throw(ArgumentError(string("source start offset (",sstart,") is < 1")))
         throw(BoundsError(dest, dstart:dmax))
     end
-    st = start(src)
+    y = iterate(src)
     for j = 1:(sstart-1)
-        if done(src, st)
+        if y === nothing
             throw(ArgumentError(string("source has fewer elements than required, ",
                                        "expected at least ",sstart,", got ",j-1)))
         end
-        _, st = next(src, st)
+        y = iterate(src, y[2])
     end
     i = Int(dstart)
-    while i <= dmax && !done(src, st)
-        val, st = next(src, st)
+    while i <= dmax && y !== nothing
+        val, st = y
         @inbounds dest[i] = val
+        y = iterate(src, st)
         i += 1
     end
     i <= dmax && throw(BoundsError(dest, i))
@@ -823,9 +825,11 @@ zero(x::AbstractArray{T}) where {T} = fill!(similar(x), zero(T))
 # While the definitions for IndexLinear are all simple enough to inline on their
 # own, IndexCartesian's CartesianIndices is more complicated and requires explicit
 # inlining.
-start(A::AbstractArray) = (@_inline_meta; itr = eachindex(A); (itr, start(itr)))
-next(A::AbstractArray, i) = (@_propagate_inbounds_meta; (idx, s) = next(i[1], i[2]); (A[idx], (i[1], s)))
-done(A::AbstractArray, i) = (@_propagate_inbounds_meta; done(i[1], i[2]))
+function iterate(A::AbstractArray, state=(eachindex(A),))
+    y = iterate(state...)
+    y === nothing && return nothing
+    A[y[1]], (state[1], tail(y)...)
+end
 
 isempty(a::AbstractArray) = (_length(a) == 0)
 
@@ -1165,7 +1169,7 @@ promote_eltype() = Bottom
 promote_eltype(v1, vs...) = promote_type(eltype(v1), promote_eltype(vs...))
 
 #TODO: ERROR CHECK
-cat(catdim::Integer) = Vector{Any}()
+_cat(catdim::Integer) = Vector{Any}()
 
 typed_vcat(::Type{T}) where {T} = Vector{T}()
 typed_hcat(::Type{T}) where {T} = Vector{T}()
@@ -1306,19 +1310,20 @@ _cs(d, a, b) = (a == b ? a : throw(DimensionMismatch(
 dims2cat(::Val{n}) where {n} = ntuple(i -> (i == n), Val(n))
 dims2cat(dims) = ntuple(in(dims), maximum(dims))
 
-cat(dims, X...) = cat_t(dims, promote_eltypeof(X...), X...)
+_cat(dims, X...) = cat_t(promote_eltypeof(X...), X...; dims=dims)
 
-function cat_t(dims, T::Type, X...)
+@inline cat_t(::Type{T}, X...; dims) where {T} = _cat_t(dims, T, X...)
+@inline function _cat_t(dims, T::Type, X...)
     catdims = dims2cat(dims)
     shape = cat_shape(catdims, (), map(cat_size, X)...)
     A = cat_similar(X[1], T, shape)
     if T <: Number && count(!iszero, catdims) > 1
         fill!(A, zero(T))
     end
-    return _cat(A, shape, catdims, X...)
+    return __cat(A, shape, catdims, X...)
 end
 
-function _cat(A, shape::NTuple{N}, catdims, X...) where N
+function __cat(A, shape::NTuple{N}, catdims, X...) where N
     offsets = zeros(Int, N)
     inds = Vector{UnitRange{Int}}(undef, N)
     concat = copyto!(zeros(Bool, N), catdims)
@@ -1372,7 +1377,7 @@ julia> vcat(c...)
  4  5  6
 ```
 """
-vcat(X...) = cat(Val(1), X...)
+vcat(X...) = cat(X...; dims=Val(1))
 """
     hcat(A...)
 
@@ -1414,13 +1419,13 @@ julia> hcat(c...)
  3  6
 ```
 """
-hcat(X...) = cat(Val(2), X...)
+hcat(X...) = cat(X...; dims=Val(2))
 
-typed_vcat(T::Type, X...) = cat_t(Val(1), T, X...)
-typed_hcat(T::Type, X...) = cat_t(Val(2), T, X...)
+typed_vcat(T::Type, X...) = cat_t(T, X...; dims=Val(1))
+typed_hcat(T::Type, X...) = cat_t(T, X...; dims=Val(2))
 
 """
-    cat(dims, A...)
+    cat(A...; dims=dims)
 
 Concatenate the input arrays along the specified dimensions in the iterable `dims`. For
 dimensions not in `dims`, all input arrays should have the same size, which will also be the
@@ -1430,27 +1435,28 @@ a single number, the different arrays are tightly stacked along that dimension. 
 an iterable containing several dimensions, this allows one to construct block diagonal
 matrices and their higher-dimensional analogues by simultaneously increasing several
 dimensions for every new input array and putting zero blocks elsewhere. For example,
-`cat([1,2], matrices...)` builds a block diagonal matrix, i.e. a block matrix with
+`cat(matrices...; dims=(1,2))` builds a block diagonal matrix, i.e. a block matrix with
 `matrices[1]`, `matrices[2]`, ... as diagonal blocks and matching zero blocks away from the
 diagonal.
 """
-cat(catdims, A::AbstractArray{T}...) where {T} = cat_t(catdims, T, A...)
+@inline cat(A...; dims) = _cat(dims, A...)
+_cat(catdims, A::AbstractArray{T}...) where {T} = cat_t(T, A...; dims=catdims)
 
 # The specializations for 1 and 2 inputs are important
 # especially when running with --inline=no, see #11158
-vcat(A::AbstractArray) = cat(Val(1), A)
-vcat(A::AbstractArray, B::AbstractArray) = cat(Val(1), A, B)
-vcat(A::AbstractArray...) = cat(Val(1), A...)
-hcat(A::AbstractArray) = cat(Val(2), A)
-hcat(A::AbstractArray, B::AbstractArray) = cat(Val(2), A, B)
-hcat(A::AbstractArray...) = cat(Val(2), A...)
+vcat(A::AbstractArray) = cat(A; dims=Val(1))
+vcat(A::AbstractArray, B::AbstractArray) = cat(A, B; dims=Val(1))
+vcat(A::AbstractArray...) = cat(A...; dims=Val(1))
+hcat(A::AbstractArray) = cat(A; dims=Val(2))
+hcat(A::AbstractArray, B::AbstractArray) = cat(A, B; dims=Val(2))
+hcat(A::AbstractArray...) = cat(A...; dims=Val(2))
 
-typed_vcat(T::Type, A::AbstractArray) = cat_t(Val(1), T, A)
-typed_vcat(T::Type, A::AbstractArray, B::AbstractArray) = cat_t(Val(1), T, A, B)
-typed_vcat(T::Type, A::AbstractArray...) = cat_t(Val(1), T, A...)
-typed_hcat(T::Type, A::AbstractArray) = cat_t(Val(2), T, A)
-typed_hcat(T::Type, A::AbstractArray, B::AbstractArray) = cat_t(Val(2), T, A, B)
-typed_hcat(T::Type, A::AbstractArray...) = cat_t(Val(2), T, A...)
+typed_vcat(T::Type, A::AbstractArray) = cat_t(T, A; dims=Val(1))
+typed_vcat(T::Type, A::AbstractArray, B::AbstractArray) = cat_t(T, A, B; dims=Val(1))
+typed_vcat(T::Type, A::AbstractArray...) = cat_t(T, A...; dims=Val(1))
+typed_hcat(T::Type, A::AbstractArray) = cat_t(T, A; dims=Val(2))
+typed_hcat(T::Type, A::AbstractArray, B::AbstractArray) = cat_t(T, A, B; dims=Val(2))
+typed_hcat(T::Type, A::AbstractArray...) = cat_t(T, A...; dims=Val(2))
 
 # 2d horizontal and vertical concatenation
 
@@ -2042,12 +2048,17 @@ function hash(a::AbstractArray{T}, h::UInt) where T
     h += hashaa_seed
     h += hash(size(a))
 
-    state = start(a)
-    done(a, state) && return h
-    x1, state = next(a, state)
-    done(a, state) && return hash(x1, h)
-    x2, state = next(a, state)
-    done(a, state) && return hash(x2, hash(x1, h))
+    y1 = iterate(a)
+    y1 === nothing && return h
+    y2 = iterate(a, y1[2])
+    y2 === nothing && return hash(y1[1], h)
+    y = iterate(a, y2[2])
+    y === nothing && return hash(y2[1], hash(y1[1], h))
+    x1, x2 = y1[1], y2[1]
+
+    # For the rest of the function, we keep three elements worth of state,
+    # x1, x2, y[1], with `y` potentially being `nothing` if there's only
+    # two elements remaining
 
     # Check whether the array is equal to a range, and hash the elements
     # at the beginning of the array as such as long as they match this assumption
@@ -2056,6 +2067,10 @@ function hash(a::AbstractArray{T}, h::UInt) where T
     if isa(a, AbstractVector) && applicable(-, x2, x1)
         n = 1
         local step, laststep, laststate
+
+        h = hash(x1, h)
+        h += hashr_seed
+
         while true
             # If overflow happens with entries of the same type, a cannot be equal
             # to a range with more than two elements because more extreme values
@@ -2077,37 +2092,38 @@ function hash(a::AbstractArray{T}, h::UInt) where T
             end
             n > 1 && !isequal(step, laststep) && break
             n += 1
-            x1 = x2
             laststep = step
-            laststate = state
-            done(a, state) && break
-            x2, state = next(a, state)
+            if y === nothing
+                # The array matches a range exactly
+                return hash(x2, hash(n, h))
+            end
+            x1, x2 = x2, y[1]
+            y = iterate(a, y[2])
         end
 
-        h = hash(first(a), h)
-        h += hashr_seed
         # Always hash at least the two first elements as a range (even in case of overflow)
         if n < 2
             h = hash(2, h)
-            h = hash(x2, h)
-            done(a, state) && return h
-            x1 = x2
-            x2, state = next(a, state)
+            h = hash(y2[1], h)
+            @assert y !== nothing
+            x1, x2 = x2, y[1]
+            y = iterate(a, y[2])
         else
             h = hash(n, h)
             h = hash(x1, h)
-            done(a, laststate) && return h
         end
     end
 
-    # Hash elements which do not correspond to a range (if any)
+    # Hash elements which do not correspond to a range
     while true
         if isequal(x2, x1)
             # For repeated elements, use run length encoding
             # This allows efficient hashing of sparse arrays
             runlength = 2
-            while !done(a, state)
-                x2, state = next(a, state)
+            while y !== nothing
+                # No need to update x1 (it's isequal x2)
+                x2 = y[1]
+                y = iterate(a, y[2])
                 isequal(x1, x2) || break
                 runlength += 1
             end
@@ -2115,9 +2131,9 @@ function hash(a::AbstractArray{T}, h::UInt) where T
             h = hash(runlength, h)
         end
         h = hash(x1, h)
-        done(a, state) && break
-        x1 = x2
-        x2, state = next(a, state)
+        y === nothing && break
+        x1, x2 = x2, y[1]
+        y = iterate(a, y[2])
     end
     !isequal(x2, x1) && (h = hash(x2, h))
     return h

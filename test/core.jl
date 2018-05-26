@@ -6072,3 +6072,58 @@ end
 @test !Base.isvatuple(Tuple{Float64,Vararg{Int,1}})
 @test !Base.isvatuple(Tuple{T,Vararg{Int,2}} where T)
 @test !Base.isvatuple(Tuple{Int,Int,Vararg{Int,2}})
+
+# The old iteration protocol shims deprecation test
+struct DelegateIterator{T}
+    x::T
+end
+Base.start(itr::DelegateIterator) = start(itr.x)
+Base.next(itr::DelegateIterator, state) = next(itr.x, state)
+Base.done(itr::DelegateIterator, state) = done(itr.x, state)
+let A = [1], B = [], C = DelegateIterator([1]), D = DelegateIterator([]), E = Any[1,"abc"]
+    @test next(A, start(A))[1] == 1
+    @test done(A, next(A, start(A))[2])
+    @test done(B, start(B))
+    @test next(C, start(C))[1] == 1
+    @test done(C, next(C, start(C))[2])
+    @test done(D, start(D))
+    @test next(E, next(E, start(E))[2])[1] == "abc"
+end
+
+# Issue 27103
+function f27103()
+    a = @isdefined x
+    x = 3
+    b = @isdefined x
+    (a, b)
+end
+@test f27103() == (false, true)
+
+g27103() = @isdefined z27103
+@test g27103() == false
+z27103 = 1
+@test g27103() == true
+
+# Issue 27181
+struct A27181
+    typ::Type
+end
+
+struct C27181
+    val
+end
+
+function f27181()
+    invoke(A27181(C27181).typ, Tuple{Any}, nothing)
+end
+@test f27181() == C27181(nothing)
+
+# Issue #27204
+struct Foo27204{T}
+end
+(::Foo27204{Int})() = 1
+(::Foo27204{Float64})() = 2
+@noinline f27204(x) = x ? Foo27204{Int}() : Foo27204{Float64}()
+foo27204(x) = f27204(x)()
+@test foo27204(true) == 1
+@test foo27204(false) == 2

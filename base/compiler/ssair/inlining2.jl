@@ -361,7 +361,7 @@ function ir_inline_unionsplit!(compact::IncrementalCompact, topmod::Module, idx:
         @assert !isa(metharg, UnionAll)
         cond = true
         @assert length(atype.parameters) == length(metharg.parameters)
-        for i in 2:length(atype.parameters)
+        for i in 1:length(atype.parameters)
             a, m = atype.parameters[i], metharg.parameters[i]
             # If this is always true, we don't need to check for it
             a <: m && continue
@@ -382,7 +382,7 @@ function ir_inline_unionsplit!(compact::IncrementalCompact, topmod::Module, idx:
         argexprs′ = argexprs
         if !isa(case, ConstantCase)
             argexprs′ = copy(argexprs)
-            for i = 2:length(metharg.parameters)
+            for i = 1:length(metharg.parameters)
                 a, m = atype.parameters[i], metharg.parameters[i]
                 isa(argexprs[i], SSAValue) || continue
                 if !(a <: m)
@@ -640,9 +640,8 @@ end
 struct SimpleCartesian
     ranges::Vector{UnitRange{Int}}
 end
-start(s::SimpleCartesian) = Int[1 for _ in 1:length(s.ranges)]
-done(s::SimpleCartesian, state) = state[end] > last(s.ranges[end])
-function next(s::SimpleCartesian, state)
+function iterate(s::SimpleCartesian, state::Vector{Int}=Int[1 for _ in 1:length(s.ranges)])
+    state[end] > last(s.ranges[end]) && return nothing
     vals = copy(state)
     any = false
     for i = 1:length(s.ranges)
@@ -673,10 +672,10 @@ function UnionSplitSignature(atypes::Vector{Any})
     UnionSplitSignature(SimpleCartesian(ranges), typs)
 end
 
-start(split::UnionSplitSignature) = start(split.it)
-done(split::UnionSplitSignature, state) = done(split.it, state)
-function next(split::UnionSplitSignature, state)
-    idxs, state = next(split.it, state)
+function iterate(split::UnionSplitSignature, state::Vector{Int}...)
+    y = iterate(split.it, state...)
+    y === nothing && return nothing
+    idxs, state = y
     sig = Any[split.typs[i][j] for (i,j) in enumerate(idxs)]
     sig, state
 end
@@ -938,8 +937,9 @@ end
 function compute_invoke_data(@nospecialize(atypes), argexprs::Vector{Any}, sv::OptimizationState)
     ft = widenconst(atypes[2])
     invoke_tt = widenconst(atypes[3])
-    if !(isconcretetype(ft) || ft <: Type) || !isType(invoke_tt) ||
-            has_free_typevars(invoke_tt) || has_free_typevars(ft) || (ft <: Builtin)
+    mt = argument_mt(ft)
+    if mt === nothing || !isType(invoke_tt) || has_free_typevars(invoke_tt) ||
+            has_free_typevars(ft) || (ft <: Builtin)
         # TODO: this can be rather aggressive at preventing inlining of closures
         # XXX: this is wrong for `ft <: Type`, since we are failing to check that
         #      the result doesn't have subtypes, or to do an intersection lookup
@@ -954,7 +954,7 @@ function compute_invoke_data(@nospecialize(atypes), argexprs::Vector{Any}, sv::O
     invoke_entry = ccall(:jl_gf_invoke_lookup, Any, (Any, UInt),
                             invoke_types, sv.params.world)
     invoke_entry === nothing && return nothing
-    invoke_data = InvokeData(ft.name.mt, invoke_entry,
+    invoke_data = InvokeData(mt, invoke_entry,
                              invoke_types, nothing, nothing)
     atype0 = atypes[2]
     argexpr0 = argexprs[2]
@@ -1021,7 +1021,7 @@ function late_inline_special_case!(ir::IRCode, idx::Int, stmt::Expr, atypes::Vec
             ir[SSAValue(idx)] = quoted(stmt.typ.val)
             return true
         end
-        subtype_call = Expr(:call, GlobalRef(Core, :(<:)), arg_T2, arg_T1)
+        subtype_call = Expr(:call, GlobalRef(Core, :(<:)), stmt.args[3], stmt.args[2])
         subtype_call.typ = Bool
         ir[SSAValue(idx)] = subtype_call
         return true
@@ -1055,6 +1055,13 @@ function ssa_substitute_op!(@nospecialize(val), arg_replacements::Vector{Any},
         head = e.head
         if head === :static_parameter
             return quoted(spvals[e.args[1]])
+        elseif head === :cfunction
+            @assert !isa(spsig, UnionAll) || !isempty(spvals)
+            e.args[3] = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), e.args[3], spsig, spvals)
+            e.args[4] = svec(Any[
+                ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), argt, spsig, spvals)
+                for argt
+                in e.args[4] ]...)
         elseif head === :foreigncall
             @assert !isa(spsig, UnionAll) || !isempty(spvals)
             for i = 1:length(e.args)

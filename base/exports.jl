@@ -357,8 +357,6 @@ export
     axes,
     broadcast!,
     broadcast,
-    broadcast_getindex,
-    broadcast_setindex!,
     cat,
     checkbounds,
     checkindex,
@@ -469,7 +467,6 @@ export
 
 # bitarrays
     falses,
-    flipbits!,
     trues,
 
 # dequeues
@@ -654,6 +651,7 @@ export
     done,
     next,
     start,
+    iterate,
 
     enumerate,  # re-exported from Iterators
     zip,
@@ -722,13 +720,13 @@ export
 
 # types
     convert,
-    # getproperty,
-    # setproperty!,
+    getproperty,
+    setproperty!,
     fieldoffset,
     fieldname,
     fieldnames,
     fieldcount,
-    # propertynames,
+    propertynames,
     isabstracttype,
     isbitstype,
     isprimitivetype,
@@ -974,7 +972,6 @@ export
     @allocated,
 
     # tasks
-    @schedule,
     @sync,
     @async,
     @task,

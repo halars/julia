@@ -1320,8 +1320,8 @@ end
 @testset "explicit zeros" begin
     if Base.USE_GPL_LIBS
         a = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [1.0, 0.0, 0.0, 1.0])
-        @test lufact(a)\[2.0, 3.0] ≈ [2.0, 3.0]
-        @test cholfact(a)\[2.0, 3.0] ≈ [2.0, 3.0]
+        @test lu(a)\[2.0, 3.0] ≈ [2.0, 3.0]
+        @test cholesky(a)\[2.0, 3.0] ≈ [2.0, 3.0]
     end
 end
 
@@ -1780,8 +1780,7 @@ end
     C, b = A[:, 1:4], fill(1., size(A, 1))
     @test !Base.USE_GPL_LIBS || factorize(C)\b ≈ Array(C)\b
     @test_throws ErrorException chol(A)
-    @test_throws ErrorException lu(A)
-    @test_throws ErrorException eig(A)
+    @test_throws ErrorException eigen(A)
     @test_throws ErrorException inv(A)
 end
 
@@ -1844,7 +1843,7 @@ end
     @test issparse(vcat(spmat, spmat))
     @test issparse(hcat(spmat, spmat))
     @test issparse(hvcat((2,), spmat, spmat))
-    @test issparse(cat((1,2), spmat, spmat))
+    @test issparse(cat(spmat, spmat; dims=(1,2)))
     # Test that concatenations of a sparse matrice with a dense matrix/vector yield sparse arrays
     @test issparse(vcat(spmat, densemat))
     @test issparse(vcat(densemat, spmat))
@@ -1853,8 +1852,8 @@ end
         @test issparse(hcat(densearg, spmat))
         @test issparse(hvcat((2,), spmat, densearg))
         @test issparse(hvcat((2,), densearg, spmat))
-        @test issparse(cat((1,2), spmat, densearg))
-        @test issparse(cat((1,2), densearg, spmat))
+        @test issparse(cat(spmat, densearg; dims=(1,2)))
+        @test issparse(cat(densearg, spmat; dims=(1,2)))
     end
 end
 

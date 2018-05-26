@@ -117,7 +117,7 @@ convert(::Type{T}, r::AbstractRange) where {T<:AbstractRange} = r isa T ? r : T(
 ## ordinal ranges
 
 abstract type OrdinalRange{T,S} <: AbstractRange{T} end
-abstract type AbstractUnitRange{T} <: OrdinalRange{T,Int} end
+abstract type AbstractUnitRange{T} <: OrdinalRange{T,T} end
 
 struct StepRange{T,S} <: OrdinalRange{T,S}
     start::T
@@ -374,7 +374,7 @@ julia> step(range(2.5, stop=10.9, length=85))
 ```
 """
 step(r::StepRange) = r.step
-step(r::AbstractUnitRange) = 1
+step(r::AbstractUnitRange{T}) where{T} = oneunit(T)
 step(r::StepRangeLen{T}) where {T} = T(r.step)
 step(r::LinRange) = (last(r)-first(r))/r.lendiv
 
@@ -450,40 +450,19 @@ copy(r::AbstractRange) = r
 
 ## iteration
 
-start(r::LinRange) = 1
-done(r::LinRange, i::Int) = length(r) < i
-function next(r::LinRange, i::Int)
+function iterate(r::Union{LinRange,StepRangeLen}, i::Int=1)
     @_inline_meta
-    unsafe_getindex(r, i), i+1
+    length(r) < i && return nothing
+    unsafe_getindex(r, i), i + 1
 end
 
-start(r::StepRange) = oftype(r.start + r.step, r.start)
-next(r::StepRange{T}, i) where {T} = (convert(T,i), i+r.step)
-done(r::StepRange, i) = isempty(r) | (i < min(r.start, r.stop)) | (i > max(r.start, r.stop))
-done(r::StepRange, i::Integer) =
-    isempty(r) | (i == oftype(i, r.stop) + r.step)
+iterate(r::OrdinalRange) = isempty(r) ? nothing : (first(r), first(r))
 
-start(r::StepRangeLen) = 1
-next(r::StepRangeLen{T}, i) where {T} = unsafe_getindex(r, i), i+1
-done(r::StepRangeLen, i) = i > length(r)
-
-start(r::UnitRange{T}) where {T} = oftype(r.start + oneunit(T), r.start)
-next(r::AbstractUnitRange{T}, i) where {T} = (convert(T, i), i + oneunit(T))
-done(r::AbstractUnitRange{T}, i) where {T} = i == oftype(i, r.stop) + oneunit(T)
-
-start(r::OneTo{T}) where {T} = oneunit(T)
-
-# some special cases to favor default Int type to avoid overflow
-let smallint = (Int === Int64 ?
-                Union{Int8,UInt8,Int16,UInt16,Int32,UInt32} :
-                Union{Int8,UInt8,Int16,UInt16})
-    global start
-    global next
-    start(r::StepRange{<:smallint}) = convert(Int, r.start)
-    next(r::StepRange{T}, i) where {T<:smallint} = (i % T, i + r.step)
-    start(r::UnitRange{<:smallint}) = convert(Int, r.start)
-    next(r::AbstractUnitRange{T}, i) where {T<:smallint} = (i % T, i + 1)
-    start(r::OneTo{<:smallint}) = 1
+function iterate(r::OrdinalRange{T}, i) where {T}
+    @_inline_meta
+    i == last(r) && return nothing
+    next = convert(T, i + step(r))
+    (next, next)
 end
 
 ## indexing
@@ -604,13 +583,10 @@ function ==(r::AbstractRange, s::AbstractRange)
     if lr != length(s)
         return false
     end
-    u, v = start(r), start(s)
-    while !done(r, u)
-        x, u = next(r, u)
-        y, v = next(s, v)
-        if x != y
-            return false
-        end
+    yr, ys = iterate(r), iterate(s)
+    while yr !== nothing
+        yr[1] == ys[1] || return false
+        yr, ys = iterate(r, yr[2]), iterate(s, ys[2])
     end
     return true
 end

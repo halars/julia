@@ -630,6 +630,16 @@ function show(io::IO, l::Core.MethodInstance)
     end
 end
 
+module IRShow
+    const Compiler = Core.Compiler
+    using Core.IR
+    import .Base: IdSet
+    import .Compiler: IRCode, ReturnNode, GotoIfNot, CFG, scan_ssa_use!, Argument
+    Base.size(r::Compiler.StmtRange) = Compiler.size(r)
+    Base.show(io::IO, r::Compiler.StmtRange) = print(io, Compiler.first(r):Compiler.last(r))
+    include("compiler/ssair/show.jl")
+end
+
 function show(io::IO, src::CodeInfo)
     # Fix slot names and types in function body
     print(io, "CodeInfo(")
@@ -637,9 +647,15 @@ function show(io::IO, src::CodeInfo)
     if src.slotnames !== nothing
         lambda_io = IOContext(lambda_io, :SOURCE_SLOTNAMES => sourceinfo_slotnames(src))
     end
-    body = Expr(:body)
-    body.args = src.code
-    show(lambda_io, body)
+    if src.codelocs !== nothing
+        println(io)
+        ir = Core.Compiler.inflate_ir(src)
+        IRShow.show_ir(lambda_io, ir, argnames=sourceinfo_slotnames(src))
+    else
+        body = Expr(:body)
+        body.args = src.code
+        show(lambda_io, body)
+    end
     print(io, ")")
 end
 
@@ -679,22 +695,23 @@ function show_delim_array(io::IO, itr, op, delim, cl, delim_one, i1=1, n=typemax
     print(io, op)
     if !show_circular(io, itr)
         recur_io = IOContext(io, :SHOWN_SET => itr)
-        state = start(itr)
+        y = iterate(itr)
         first = true
         i0 = i1-1
-        while i1 > 1 && !done(itr, state)
-            _, state = next(itr, state)
+        while i1 > 2 && y !== nothing
+            y = iterate(itr, y[2])
             i1 -= 1
         end
-        if !done(itr, state)
+        if y !== nothing
             typeinfo = get(io, :typeinfo, Any)
             while true
-                x, state = next(itr, state)
+                x = y[1]
+                y = iterate(itr, y[2])
                 show(IOContext(recur_io, :typeinfo =>
                                typeinfo <: Tuple ? fieldtype(typeinfo, i1+i0) : typeinfo),
                      x)
                 i1 += 1
-                if done(itr, state) || i1 > n
+                if y === nothing || i1 > n
                     delim_one && first && print(io, delim)
                     break
                 end
@@ -1651,6 +1668,7 @@ dump(io::IOContext, x::Module, n::Int, indent) = print(io, "Module ", x)
 dump(io::IOContext, x::String, n::Int, indent) = (print(io, "String "); show(io, x))
 dump(io::IOContext, x::Symbol, n::Int, indent) = print(io, typeof(x), " ", x)
 dump(io::IOContext, x::Union,  n::Int, indent) = print(io, x)
+dump(io::IOContext, x::Ptr,    n::Int, indent) = print(io, x)
 
 function dump_elts(io::IOContext, x::Array, n::Int, indent, i0, i1)
     for i in i0:i1
@@ -1726,6 +1744,7 @@ end
     dump(x; maxdepth=$DUMP_DEFAULT_MAXDEPTH)
 
 Show every part of the representation of a value.
+The depth of the output is truncated at `maxdepth`.
 
 # Examples
 ```jldoctest
@@ -1742,32 +1761,11 @@ MyStruct
   y: Tuple{Int64,Int64}
     1: Int64 2
     2: Int64 3
-```
-Nested data structures are truncated at `maxdepth`.
-```jldoctest
-julia> struct DeeplyNested
-           xs::Vector{DeeplyNested}
-       end;
 
-julia> x = DeeplyNested([]);
-
-julia> push!(x.xs, x);
-
-julia> dump(x)
-DeeplyNested
-  xs: Array{DeeplyNested}((1,))
-    1: DeeplyNested
-      xs: Array{DeeplyNested}((1,))
-        1: DeeplyNested
-          xs: Array{DeeplyNested}((1,))
-            1: DeeplyNested
-              xs: Array{DeeplyNested}((1,))
-                1: DeeplyNested
-
-julia> dump(x, maxdepth=2)
-DeeplyNested
-  xs: Array{DeeplyNested}((1,))
-    1: DeeplyNested
+julia> dump(x; maxdepth = 1)
+MyStruct
+  x: Int64 1
+  y: Tuple{Int64,Int64}
 ```
 """
 dump(arg; maxdepth=DUMP_DEFAULT_MAXDEPTH) = dump(IOContext(stdout::IO, :limit => true), arg; maxdepth=maxdepth)
