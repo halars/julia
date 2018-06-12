@@ -6,6 +6,7 @@
 
 A compact way of representing the type for a tuple of length `N` where all elements are of type `T`.
 
+# Examples
 ```jldoctest
 julia> isa((1, 2, 3, 4, 5, 6), NTuple{6, Int})
 true
@@ -23,6 +24,7 @@ size(t::Tuple, d) = (d == 1) ? length(t) : throw(ArgumentError("invalid tuple di
 @eval getindex(t::Tuple, i::Real) = getfield(t, convert(Int, i), $(Expr(:boundscheck)))
 getindex(t::Tuple, r::AbstractArray{<:Any,1}) = ([t[ri] for ri in r]...,)
 getindex(t::Tuple, b::AbstractArray{Bool,1}) = length(b) == length(t) ? getindex(t, findall(b)) : throw(BoundsError(t, b))
+getindex(t::Tuple, c::Colon) = t
 
 # returns new tuple; N.B.: becomes no-op if i is out-of-bounds
 setindex(x::Tuple, v, i::Integer) = (@_inline_meta; _setindex(v, i, x...))
@@ -120,6 +122,7 @@ end
 Create a tuple of length `n`, computing each element as `f(i)`,
 where `i` is the index of the element.
 
+# Examples
 ```jldoctest
 julia> ntuple(i -> 2*i, 4)
 (2, 4, 6, 8)

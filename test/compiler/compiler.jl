@@ -477,24 +477,25 @@ function is_typed_expr(e::Expr)
     end
     return false
 end
+is_typed_expr(@nospecialize other) = false
 test_inferred_static(@nospecialize(other)) = true
 test_inferred_static(slot::TypedSlot) = @test isdispatchelem(slot.typ)
 function test_inferred_static(expr::Expr)
-    if is_typed_expr(expr)
-        @test isdispatchelem(expr.typ)
-    end
     for a in expr.args
         test_inferred_static(a)
     end
 end
-function test_inferred_static(arrow::Pair)
+function test_inferred_static(arrow::Pair, all_ssa)
     code, rt = arrow
     @test isdispatchelem(rt)
     @test code.inferred
     @test all(isdispatchelem, code.slottypes)
-    @test all(isdispatchelem, code.ssavaluetypes)
-    for e in code.code
+    for i = 1:length(code.code)
+        e = code.code[i]
         test_inferred_static(e)
+        if all_ssa && is_typed_expr(e)
+            @test isdispatchelem(code.ssavaluetypes[i])
+        end
     end
 end
 
@@ -507,6 +508,7 @@ function f18679()
             return a[1]
         end
     end
+    error()
 end
 g18679(x::Tuple) = ()
 g18679() = g18679(any_undef_global::Union{Int, Tuple{}})
@@ -529,26 +531,28 @@ function g19348(x)
     return a + b + c[1]
 end
 
-for codetype in Any[
-        code_typed(f18679, ())[1],
-        code_typed(g18679, ())[1],
-        code_typed(h18679, ())[1],
-        code_typed(g19348, (typeof((1, 2.0)),))[1]]
+for (codetype, all_ssa) in Any[
+        (code_typed(f18679, ())[1], true),
+        (code_typed(g18679, ())[1], false),
+        (code_typed(h18679, ())[1], true),
+        (code_typed(g19348, (typeof((1, 2.0)),))[1], true)]
     # make sure none of the slottypes are left as Core.Compiler.Const objects
     code = codetype[1]
     @test all(x->isa(x, Type), code.slottypes)
     local notconst(@nospecialize(other)) = true
     notconst(slot::TypedSlot) = @test isa(slot.typ, Type)
     function notconst(expr::Expr)
-        @test isa(expr.typ, Type)
         for a in expr.args
             notconst(a)
         end
     end
-    for e in code.code
+    local i
+    for i = 1:length(code.code)
+        e = code.code[i]
         notconst(e)
+        @test isa(code.ssavaluetypes[i], Type)
     end
-    test_inferred_static(code)
+    test_inferred_static(codetype, all_ssa)
 end
 @test f18679() === ()
 @test_throws UndefVarError(:any_undef_global) g18679()
@@ -930,11 +934,12 @@ let f, m
     f() = 0
     m = first(methods(f))
     m.source = Base.uncompressed_ast(m)::CodeInfo
-    m.source.ssavaluetypes = 2
+    m.source.ssavaluetypes = 3
+    m.source.codelocs = [1, 1, 1]
     m.source.code = Any[
-        Expr(:(=), SSAValue(0), Expr(:call, GlobalRef(Core, :svec), 1, 2, 3)),
-        Expr(:(=), SSAValue(1), Expr(:call, Core._apply, GlobalRef(Base, :+), SSAValue(0))),
-        Expr(:return, SSAValue(1))
+        Expr(:call, GlobalRef(Core, :svec), 1, 2, 3),
+        Expr(:call, Core._apply, GlobalRef(Base, :+), SSAValue(1)),
+        Expr(:return, SSAValue(2))
     ]
     @test @inferred(f()) == 6
 end
@@ -1117,7 +1122,6 @@ function test_const_return(@nospecialize(f), @nospecialize(t), @nospecialize(val
 end
 
 function find_call(code::Core.CodeInfo, @nospecialize(func), narg)
-    new_style_ir = code.codelocs !== nothing
     for ex in code.code
         Meta.isexpr(ex, :(=)) && (ex = ex.args[2])
         isa(ex, Expr) || continue
@@ -1128,7 +1132,7 @@ function find_call(code::Core.CodeInfo, @nospecialize(func), narg)
                     farg = typeof(getfield(farg.mod, farg.name))
                 end
             elseif isa(farg, Core.SSAValue)
-                farg = code.ssavaluetypes[farg.id + (new_style_ir ? 0 : 1)]
+                farg = code.ssavaluetypes[farg.id]
             else
                 farg = typeof(farg)
             end
@@ -1482,13 +1486,11 @@ i = 1
 while !Meta.isexpr(opt25261[i], :gotoifnot); global i += 1; end
 foundslot = false
 for expr25261 in opt25261[i:end]
-    Meta.isexpr(expr25261, :(=)) || continue
-    isa(expr25261.args[2], Union{GlobalRef, Expr}) && continue
-    # This should be the assignment to the SSAValue into the getfield
-    # call - make sure it's a TypedSlot
-    @test isa(expr25261.args[2], TypedSlot)
-    @test expr25261.args[2].typ === Tuple{Int, Int}
-    global foundslot = true
+    if expr25261 isa TypedSlot && expr25261.typ === Tuple{Int, Int}
+        # This should be the assignment to the SSAValue into the getfield
+        # call - make sure it's a TypedSlot
+        global foundslot = true
+    end
 end
 @test foundslot
 
@@ -1551,12 +1553,15 @@ g26826(x) = getfield26826(x, :a, :b)
 # If this test is broken (especially if inference is getting a correct, but loose result,
 # like a Union) then it's potentially an indication that the optimizer isn't hitting the
 # InferenceResult cache properly for varargs methods.
-typed_code = Core.Compiler.code_typed(f26826, (Float64,))[1].first.code
+typed_code = Core.Compiler.code_typed(f26826, (Float64,))[1].first
 found_well_typed_getfield_call = false
-for stmt in typed_code
-    lhs = Meta.isexpr(stmt, :(=)) ? stmt.args[2] : stmt
-    if Meta.isexpr(lhs, :call) && lhs.args[1] == GlobalRef(Base, :getfield) && lhs.typ === Float64
-        global found_well_typed_getfield_call = true
+let i
+    for i = 1:length(typed_code.code)
+        stmt = typed_code.code[i]
+        rhs = Meta.isexpr(stmt, :(=)) ? stmt.args[2] : stmt
+        if Meta.isexpr(rhs, :call) && rhs.args[1] == GlobalRef(Base, :getfield) && typed_code.ssavaluetypes[i] === Float64
+            global found_well_typed_getfield_call = true
+        end
     end
 end
 
@@ -1580,3 +1585,6 @@ function _g_ifelse_isa_()
     ifelse(isa(x, Nothing), 1, x)
 end
 @test Base.return_types(_g_ifelse_isa_, ()) == [Int]
+
+# Equivalence of Const(T.instance) and T for singleton types
+@test Const(nothing) ⊑ Nothing && Nothing ⊑ Const(nothing)

@@ -1004,7 +1004,6 @@ jl_expr_t *jl_exprn(jl_sym_t *head, size_t n)
                                             jl_expr_type);
     ex->head = head;
     ex->args = ar;
-    ex->etype = (jl_value_t*)jl_any_type;
     JL_GC_POP();
     return ex;
 }
@@ -1022,7 +1021,6 @@ JL_CALLABLE(jl_f__expr)
                                             jl_expr_type);
     ex->head = (jl_sym_t*)args[0];
     ex->args = ar;
-    ex->etype = (jl_value_t*)jl_any_type;
     JL_GC_POP();
     return (jl_value_t*)ex;
 }
@@ -1289,7 +1287,7 @@ void jl_init_primitives(void)
 
     add_builtin("Expr", (jl_value_t*)jl_expr_type);
     add_builtin("LineNumberNode", (jl_value_t*)jl_linenumbernode_type);
-    add_builtin("LabelNode", (jl_value_t*)jl_labelnode_type);
+    add_builtin("LineInfoNode", (jl_value_t*)jl_lineinfonode_type);
     add_builtin("GotoNode", (jl_value_t*)jl_gotonode_type);
     add_builtin("PiNode", (jl_value_t*)jl_pinode_type);
     add_builtin("PhiNode", (jl_value_t*)jl_phinode_type);

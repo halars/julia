@@ -82,7 +82,6 @@
 #mutable struct Expr
 #    head::Symbol
 #    args::Array{Any,1}
-#    typ::Any
 #end
 
 #struct LineNumberNode
@@ -90,8 +89,12 @@
 #    file::Any # nominally Union{Symbol,Nothing}
 #end
 
-#struct LabelNode
-#    label::Int
+#struct LineInfoNode
+#    mod::Module
+#    method::Symbol
+#    file::Symbol
+#    line::Int
+#    inlined_at::Int
 #end
 
 #struct GotoNode
@@ -352,7 +355,6 @@ end
 VecElement(arg::T) where {T} = VecElement{T}(arg)
 
 _new(typ::Symbol, argty::Symbol) = eval(Core, :($typ(@nospecialize n::$argty) = $(Expr(:new, typ, :n))))
-_new(:LabelNode, :Int)
 _new(:GotoNode, :Int)
 _new(:NewvarNode, :SlotNumber)
 _new(:QuoteNode, :Any)
@@ -367,6 +369,8 @@ eval(Core, :(PiNode(val, typ) = $(Expr(:new, :PiNode, :val, :typ))))
 eval(Core, :(PhiCNode(values::Array{Any, 1}) = $(Expr(:new, :PhiCNode, :values))))
 eval(Core, :(UpsilonNode(val) = $(Expr(:new, :UpsilonNode, :val))))
 eval(Core, :(UpsilonNode() = $(Expr(:new, :UpsilonNode))))
+eval(Core, :(LineInfoNode(mod::Module, method::Symbol, file::Symbol, line::Int, inlined_at::Int) =
+             $(Expr(:new, :LineInfoNode, :mod, :method, :file, :line, :inlined_at))))
 
 Module(name::Symbol=:anonymous, std_imports::Bool=true) = ccall(:jl_f_new_module, Ref{Module}, (Any, Bool), name, std_imports)
 
@@ -429,34 +433,27 @@ function Symbol(a::Array{UInt8,1})
 end
 Symbol(s::Symbol) = s
 
-struct LineInfoNode
-    mod::Module
-    method::Symbol
-    file::Symbol
-    line::Int
-    inlined_at::Int
-    LineInfoNode(mod::Module, method::Symbol, file::Symbol, line::Int, inlined_at::Int) =
-        new(mod, method, file, line, inlined_at)
-end
-
 # module providing the IR object model
 module IR
-export CodeInfo, MethodInstance, GotoNode, LabelNode,
+export CodeInfo, MethodInstance, GotoNode,
     NewvarNode, SSAValue, Slot, SlotNumber, TypedSlot,
     PiNode, PhiNode, PhiCNode, UpsilonNode, LineInfoNode
 
-import Core: CodeInfo, MethodInstance, GotoNode, LabelNode,
+import Core: CodeInfo, MethodInstance, GotoNode,
     NewvarNode, SSAValue, Slot, SlotNumber, TypedSlot,
     PiNode, PhiNode, PhiCNode, UpsilonNode, LineInfoNode
 
 end
 
 # docsystem basics
+const unescape = Symbol("hygienic-scope")
 macro doc(x...)
-    atdoc(__source__, __module__, x...)
+    docex = atdoc(__source__, __module__, x...)
+    isa(docex, Expr) && docex.head === :escape && return docex
+    return Expr(:escape, Expr(unescape, docex, typeof(atdoc).name.module))
 end
 macro __doc__(x)
-    Expr(:escape, Expr(:block, Expr(:meta, :doc), x))
+    return Expr(:escape, Expr(:block, Expr(:meta, :doc), x))
 end
 atdoc     = (source, mod, str, expr) -> Expr(:escape, expr)
 atdoc!(λ) = global atdoc = λ

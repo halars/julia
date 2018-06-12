@@ -696,9 +696,9 @@ end
     # hypot
     @test hypot(BigFloat(3), BigFloat(4)) == 5
 
-    # atan2
+    # atan
     setprecision(53) do
-        @test atan2(12,2) == atan2(BigFloat(12), BigFloat(2))
+        @test atan(12,2) == atan(BigFloat(12), BigFloat(2))
     end
 end
 @testset "ldexp" begin
@@ -923,5 +923,3 @@ end
         @test to_string(big"-1.0") == "-1.0"
     end
 end
-
-@test beta(big(1.0),big(1.2)) ≈ beta(1.0,1.2) rtol=4*eps()

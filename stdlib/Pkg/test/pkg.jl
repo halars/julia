@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 module OperationsTest
 
 import Random: randstring
@@ -188,6 +190,11 @@ temp_pkg_dir() do project_path
         @test haskey(Pkg.installed(), TEST_PKG.name)
         Pkg.rm(TEST_PKG.name)
     end
+end
+
+
+@testset "parse package url win" begin
+    @test typeof(Pkg.REPLMode.parse_package("https://github.com/abc/ABC.jl"; context=Pkg.REPLMode.CMD_ADD)) == PackageSpec
 end
 
 include("repl.jl")

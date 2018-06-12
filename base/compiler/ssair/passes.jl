@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: https://julialang.org/license
+
 """
     This struct keeps track of all uses of some mutable struct allocated
     in the current function. `uses` are all instances of `getfield` on the
@@ -101,11 +103,11 @@ function compute_value_for_use(ir::IRCode, domtree::DomTree, allblocks, du, phin
     end
 end
 
-function simple_walk(compact::IncrementalCompact, defssa::Union{SSAValue, NewSSAValue, OldSSAValue}, pi_callback=(pi,idx)->nothing)
+function simple_walk(compact::IncrementalCompact, @nospecialize(defssa#=::AnySSAValue=#), pi_callback=(@nospecialize(pi),@nospecialize(idx))->false)
     while true
         if isa(defssa, OldSSAValue) && already_inserted(compact, defssa)
             rename = compact.ssa_rename[defssa.id]
-            if isa(rename, Union{SSAValue, OldSSAValue, NewSSAValue})
+            if isa(rename, AnySSAValue)
                 defssa = rename
                 continue
             end
@@ -113,7 +115,9 @@ function simple_walk(compact::IncrementalCompact, defssa::Union{SSAValue, NewSSA
         end
         def = compact[defssa]
         if isa(def, PiNode)
-            pi_callback(def, defssa)
+            if pi_callback(def, defssa)
+                return defssa
+            end
             if isa(def.val, SSAValue)
                 if isa(defssa, OldSSAValue) && !already_inserted(compact, defssa)
                     defssa = OldSSAValue(def.val.id)
@@ -123,7 +127,7 @@ function simple_walk(compact::IncrementalCompact, defssa::Union{SSAValue, NewSSA
             else
                 return def.val
             end
-        elseif isa(def, Union{SSAValue, OldSSAValue, NewSSAValue})
+        elseif isa(def, AnySSAValue)
             pi_callback(def, defssa)
             defssa = def
         elseif isa(def, Union{PhiNode, PhiCNode, Expr, GlobalRef})
@@ -135,7 +139,7 @@ function simple_walk(compact::IncrementalCompact, defssa::Union{SSAValue, NewSSA
 end
 
 function simple_walk_constraint(compact, defidx, typeconstraint = types(compact)[defidx])
-    callback = (pi, _)->isa(pi, PiNode) && (typeconstraint = typeintersect(typeconstraint, pi.typ))
+    callback = (@nospecialize(pi), _)->(isa(pi, PiNode) && (typeconstraint = typeintersect(typeconstraint, pi.typ)); false)
     def = simple_walk(compact, defidx, callback)
     def, typeconstraint
 end
@@ -180,9 +184,9 @@ function walk_to_defs(compact, defssa, typeconstraint, visited_phinodes=Any[])
                 if isa(defssa, OldSSAValue) && isa(val, SSAValue)
                     val = OldSSAValue(val.id)
                 end
-                if isa(val, Union{SSAValue, OldSSAValue, NewSSAValue})
+                if isa(val, AnySSAValue)
                     new_def, new_constraint = simple_walk_constraint(compact, val, typeconstraint)
-                    if isa(new_def, Union{SSAValue, OldSSAValue, NewSSAValue})
+                    if isa(new_def, AnySSAValue)
                         if !(new_def in visited)
                             push!(worklist, (new_def, new_constraint))
                         end
@@ -240,13 +244,13 @@ function lift_leaves(compact::IncrementalCompact, @nospecialize(stmt),
     maybe_undef = false
     for leaf in leaves
         leaf_key = leaf
-        if isa(leaf, Union{SSAValue, OldSSAValue, NewSSAValue})
+        if isa(leaf, AnySSAValue)
             if isa(leaf, OldSSAValue) && already_inserted(compact, leaf)
                 leaf = compact.ssa_rename[leaf.id]
-                if isa(leaf, Union{SSAValue, OldSSAValue, NewSSAValue})
+                if isa(leaf, AnySSAValue)
                     leaf = simple_walk(compact, leaf)
                 end
-                if isa(leaf, Union{SSAValue, OldSSAValue, NewSSAValue})
+                if isa(leaf, AnySSAValue)
                     def = compact[leaf]
                 else
                     def = leaf
@@ -259,10 +263,15 @@ function lift_leaves(compact::IncrementalCompact, @nospecialize(stmt),
                 if isa(leaf, OldSSAValue) && isa(lifted, SSAValue)
                     lifted = OldSSAValue(lifted.id)
                 end
+                if isa(lifted, GlobalRef) || isa(lifted, Expr)
+                    lifted = insert_node!(compact, leaf, compact_exprtype(compact, lifted), lifted)
+                    def.args[1+field] = lifted
+                    (isa(leaf, SSAValue) && (leaf.id < compact.result_idx)) && push!(compact.late_fixup, leaf.id)
+                end
                 lifted_leaves[leaf_key] = RefValue{Any}(lifted)
                 continue
             elseif isexpr(def, :new)
-                typ = def.typ
+                typ = types(compact)[leaf]
                 if isa(typ, UnionAll)
                     typ = unwrap_unionall(typ)
                 end
@@ -292,6 +301,11 @@ function lift_leaves(compact::IncrementalCompact, @nospecialize(stmt),
                 lifted = def.args[1+field]
                 if isa(leaf, OldSSAValue) && isa(lifted, SSAValue)
                     lifted = OldSSAValue(lifted.id)
+                end
+                if isa(lifted, GlobalRef) || isa(lifted, Expr)
+                    lifted = insert_node!(compact, leaf, compact_exprtype(compact, lifted), lifted)
+                    def.args[1+field] = lifted
+                    (isa(leaf, SSAValue) && (leaf.id < compact.result_idx)) && push!(compact.late_fixup, leaf.id)
                 end
                 lifted_leaves[leaf_key] = RefValue{Any}(lifted)
                 continue
@@ -337,9 +351,7 @@ function lift_leaves(compact::IncrementalCompact, @nospecialize(stmt),
     lifted_leaves, maybe_undef
 end
 
-make_MaybeUndef(typ) = isa(typ, MaybeUndef) ? typ : MaybeUndef(typ)
-
-const AnySSAValue = Union{SSAValue, OldSSAValue, NewSSAValue}
+make_MaybeUndef(@nospecialize(typ)) = isa(typ, MaybeUndef) ? typ : MaybeUndef(typ)
 
 function lift_comparison!(compact::IncrementalCompact, idx::Int,
         @nospecialize(c1), @nospecialize(c2), stmt::Expr,
@@ -440,7 +452,7 @@ function perform_lifting!(compact::IncrementalCompact,
                 end
                 lifted_val = lifted_val.x
                 if isa(lifted_val, Union{NewSSAValue, SSAValue, OldSSAValue})
-                    lifted_val = simple_walk(compact, lifted_val)
+                    lifted_val = simple_walk(compact, lifted_val, (_a, _b)->true)
                 end
                 push!(new_node.values, lifted_val)
             elseif isa(val, Union{NewSSAValue, SSAValue, OldSSAValue}) && val in keys(reverse_mapping)
@@ -534,7 +546,7 @@ function getfield_elim_pass!(ir::IRCode, domtree)
             for (pidx, preserved_arg) in enumerate(old_preserves)
                 intermediaries = IdSet()
                 isa(preserved_arg, SSAValue) || continue
-                def = simple_walk(compact, preserved_arg, (pi, ssa)->push!(intermediaries, ssa.id))
+                def = simple_walk(compact, preserved_arg, (pi, ssa)->(push!(intermediaries, ssa.id); false))
                 isa(def, SSAValue) || continue
                 defidx = def.id
                 def = compact[defidx]
@@ -543,11 +555,11 @@ function getfield_elim_pass!(ir::IRCode, domtree)
                     old_preserves[pidx] = nothing
                     continue
                 elseif isexpr(def, :new)
-                    typ = def.typ
+                    typ = widenconst(compact_exprtype(compact, SSAValue(defidx)))
                     if isa(typ, UnionAll)
                         typ = unwrap_unionall(typ)
                     end
-                    if !typ.mutable
+                    if typ isa DataType && !typ.mutable
                         process_immutable_preserve(new_preserves, compact, def)
                         old_preserves[pidx] = nothing
                         continue
@@ -564,7 +576,6 @@ function getfield_elim_pass!(ir::IRCode, domtree)
                 old_preserves = filter(ssa->ssa !== nothing, old_preserves)
                 new_expr = Expr(:foreigncall, stmt.args[1:(6+nccallargs-1)]...,
                     old_preserves..., new_preserves...)
-                new_expr.typ = stmt.typ
                 compact[idx] = new_expr
             end
             continue
@@ -584,7 +595,7 @@ function getfield_elim_pass!(ir::IRCode, domtree)
         if struct_typ.mutable
             isa(def, SSAValue) || continue
             intermediaries = IdSet()
-            def = simple_walk(compact, def, (pi, ssa)->push!(intermediaries, ssa.id))
+            def = simple_walk(compact, def, (pi, ssa)->(push!(intermediaries, ssa.id); false))
             # Mutable stuff here
             isa(def, SSAValue) || continue
             mid, defuse = get!(defuses, def.id, (IdSet{Int}(), SSADefUse()))
@@ -662,7 +673,7 @@ function getfield_elim_pass!(ir::IRCode, domtree)
         # Find the type for this allocation
         defexpr = ir[SSAValue(idx)]
         isexpr(defexpr, :new) || continue
-        typ = defexpr.typ
+        typ = ir.types[idx]
         if isa(typ, UnionAll)
             typ = unwrap_unionall(typ)
         end
@@ -682,6 +693,18 @@ function getfield_elim_pass!(ir::IRCode, domtree)
             field = try_compute_fieldidx_expr(typ, ir[SSAValue(use)])
             field === nothing && (ok = false; break)
             push!(fielddefuse[field].defs, use)
+        end
+        ok || continue
+        # Check that the defexpr has defined values for all the fields
+        # we're accessing. In the future, we may want to relax this,
+        # but we should come up with semantics for well defined semantics
+        # for uninitialized fields first.
+        for (fidx, du) in pairs(fielddefuse)
+            isempty(du.uses) && continue
+            if fidx + 1 > length(defexpr.args)
+                ok = false
+                break
+            end
         end
         ok || continue
         preserve_uses = IdDict{Int, Vector{Any}}((idx=>Any[] for idx in IdSet{Int}(defuse.ccall_preserve_uses)))
@@ -734,7 +757,6 @@ function getfield_elim_pass!(ir::IRCode, domtree)
             old_preserves = filter(ssa->!isa(ssa, SSAValue) || !(ssa.id in intermediaries), useexpr.args[(6+nccallargs):end])
             new_expr = Expr(:foreigncall, useexpr.args[1:(6+nccallargs-1)]...,
                 old_preserves..., new_preserves...)
-            new_expr.typ = useexpr.typ
             ir[SSAValue(use)] = new_expr
         end
     end
@@ -833,7 +855,10 @@ function type_lift_pass!(ir::IRCode)
             # node (or an UpsilonNode() argument to a PhiC node),
             # so lift all these nodes that have maybe undef values
             processed = IdDict{Int, Union{SSAValue, Bool}}()
-            if !isa(val, SSAValue)
+            while isa(val, SSAValue) && isa(ir.stmts[val.id], PiNode)
+                val = ir.stmts[val.id].val
+            end
+            if !isa(val, SSAValue) || (!isa(ir.stmts[val.id], PhiNode) && !isa(ir.stmts[val.id], PhiCNode))
                 (isa(val, GlobalRef) || isexpr(val, :static_parameter)) && continue
                 if stmt.head === :undefcheck
                     ir.stmts[idx] = nothing
@@ -843,19 +868,8 @@ function type_lift_pass!(ir::IRCode)
                 continue
             end
             stmt_id = val.id
-            while isa(ir.stmts[stmt_id], PiNode)
-                stmt_id = ir.stmts[stmt_id].val.id
-            end
             worklist = Tuple{Int, Int, SSAValue, Int}[(stmt_id, 0, SSAValue(0), 0)]
             def = ir.stmts[stmt_id]
-            if !isa(def, PhiNode) && !isa(def, PhiCNode)
-                if stmt.head === :isdefined
-                    ir.stmts[idx] = true
-                else
-                    ir.stmts[idx] = nothing
-                end
-                continue
-            end
             if !haskey(lifted_undef, stmt_id)
                 first = true
                 while !isempty(worklist)
