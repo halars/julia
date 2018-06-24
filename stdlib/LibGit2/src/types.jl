@@ -45,6 +45,9 @@ Matches the [`git_time`](https://libgit2.github.com/libgit2/#HEAD/type/git_time)
 struct TimeStruct
     time::Int64     # time in seconds from epoch
     offset::Cint    # timezone offset in minutes
+    @static if LibGit2.VERSION >= v"0.27.0"
+        sign::Cchar
+    end
 end
 
 """
@@ -830,6 +833,8 @@ The fields represent:
   * `flags`: flags for controlling any callbacks used in a status call.
   * `pathspec`: an array of paths to use for path-matching. The behavior of the path-matching
     will vary depending on the values of `show` and `flags`.
+  * The `baseline` is the tree to be used for comparison to the working directory and
+    index; defaults to HEAD.
 """
 @kwdef struct StatusOptions
     version::Cuint           = 1
@@ -839,6 +844,9 @@ The fields represent:
                                Consts.STATUS_OPT_RENAMES_HEAD_TO_INDEX |
                                Consts.STATUS_OPT_SORT_CASE_SENSITIVELY
     pathspec::StrArrayStruct
+    @static if LibGit2.VERSION >= v"0.27.0"
+        baseline::Ptr{Cvoid}
+    end
 end
 
 """
@@ -913,7 +921,7 @@ function Base.show(io::IO, ce::ConfigEntry)
 end
 
 """
-    split(ce::LibGit2.ConfigEntry) -> Tuple{String,String,String,String}
+    LibGit2.split_cfg_entry(ce::LibGit2.ConfigEntry) -> Tuple{String,String,String,String}
 
 Break the `ConfigEntry` up to the following pieces: section, subsection, name, and value.
 
@@ -930,14 +938,14 @@ The `ConfigEntry` would look like the following:
 julia> entry
 ConfigEntry("credential.https://example.com.username", "me")
 
-julia> split(entry)
+julia> LibGit2.split_cfg_entry(entry)
 ("credential", "https://example.com", "username", "me")
 ```
 
 Refer to the [git config syntax documenation](https://git-scm.com/docs/git-config#_syntax)
 for more details.
 """
-function Base.split(ce::ConfigEntry)
+function split_cfg_entry(ce::ConfigEntry)
     key = unsafe_string(ce.name)
 
     # Determine the positions of the delimiters
@@ -1172,8 +1180,6 @@ function objtype(obj_type::Consts.OBJECT)
     end
 end
 
-import Base.securezero!
-
 abstract type AbstractCredential end
 
 """
@@ -1186,11 +1192,9 @@ isfilled(::AbstractCredential)
 "Credential that support only `user` and `password` parameters"
 mutable struct UserPasswordCredential <: AbstractCredential
     user::String
-    pass::String
-    function UserPasswordCredential(user::AbstractString="", pass::AbstractString="")
-        c = new(user, pass)
-        finalizer(securezero!, c)
-        return c
+    pass::Base.SecretBuffer
+    function UserPasswordCredential(user::AbstractString="", pass::Union{AbstractString, Base.SecretBuffer}="")
+        new(user, pass)
     end
 
     # Deprecated constructors
@@ -1204,9 +1208,9 @@ mutable struct UserPasswordCredential <: AbstractCredential
     UserPasswordCredential(prompt_if_incorrect::Bool) = UserPasswordCredential("","",prompt_if_incorrect)
 end
 
-function securezero!(cred::UserPasswordCredential)
-    securezero!(cred.user)
-    securezero!(cred.pass)
+function Base.shred!(cred::UserPasswordCredential)
+    cred.user = ""
+    Base.shred!(cred.pass)
     return cred
 end
 
@@ -1221,14 +1225,13 @@ end
 "SSH credential type"
 mutable struct SSHCredential <: AbstractCredential
     user::String
-    pass::String
+    pass::Base.SecretBuffer
+    # Paths to private keys
     prvkey::String
     pubkey::String
-    function SSHCredential(user::AbstractString="", pass::AbstractString="",
-                            prvkey::AbstractString="", pubkey::AbstractString="")
-        c = new(user, pass, prvkey, pubkey)
-        finalizer(securezero!, c)
-        return c
+    function SSHCredential(user="", pass="",
+                           prvkey="", pubkey="")
+        new(user, pass, prvkey, pubkey)
     end
 
     # Deprecated constructors
@@ -1243,11 +1246,11 @@ mutable struct SSHCredential <: AbstractCredential
     SSHCredential(prompt_if_incorrect::Bool) = SSHCredential("","","","",prompt_if_incorrect)
 end
 
-function securezero!(cred::SSHCredential)
-    securezero!(cred.user)
-    securezero!(cred.pass)
-    securezero!(cred.prvkey)
-    securezero!(cred.pubkey)
+function Base.shred!(cred::SSHCredential)
+    cred.user = ""
+    Base.shred!(cred.pass)
+    cred.prvkey = ""
+    cred.pubkey = ""
     return cred
 end
 
@@ -1270,8 +1273,8 @@ Base.haskey(cache::CachedCredentials, cred_id) = Base.haskey(cache.cred, cred_id
 Base.getindex(cache::CachedCredentials, cred_id) = Base.getindex(cache.cred, cred_id)
 Base.get!(cache::CachedCredentials, cred_id, default) = Base.get!(cache.cred, cred_id, default)
 
-function securezero!(p::CachedCredentials)
-    foreach(securezero!, values(p.cred))
+function Base.shred!(p::CachedCredentials)
+    foreach(Base.shred!, values(p.cred))
     return p
 end
 
@@ -1385,7 +1388,7 @@ function approve(p::CredentialPayload; shred::Bool=true)
         approve(p.config, cred, p.url)
     end
 
-    shred && securezero!(cred)
+    shred && Base.shred!(cred)
     nothing
 end
 
@@ -1410,7 +1413,7 @@ function reject(p::CredentialPayload; shred::Bool=true)
         reject(p.config, cred, p.url)
     end
 
-    shred && securezero!(cred)
+    shred && Base.shred!(cred)
     nothing
 end
 

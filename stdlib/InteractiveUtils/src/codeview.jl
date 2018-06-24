@@ -2,50 +2,8 @@
 
 # displaying type warnings
 
-function code_warntype_legacy_ir(io::IO, src::Core.CodeInfo, rettype)
-    function slots_used(ci, slotnames)
-        used = falses(length(slotnames))
-        scan_exprs!(used, ci.code)
-        return used
-    end
-
-    function scan_exprs!(used, exprs)
-        for ex in exprs
-            if isa(ex, Core.Slot)
-                used[ex.id] = true
-            elseif isa(ex, Expr)
-                scan_exprs!(used, ex.args)
-            end
-        end
-    end
-
-    emph_io = IOContext(io, :TYPEEMPHASIZE => true)
-    println(emph_io, "Variables:")
-    slotnames = Base.sourceinfo_slotnames(src)
-    used_slotids = slots_used(src, slotnames)
-    for i = 1:length(slotnames)
-        if used_slotids[i]
-            print(emph_io, "  ", slotnames[i])
-            if isa(src.slottypes, Array)
-                show_expr_type(emph_io, src.slottypes[i], true)
-            end
-            print(emph_io, '\n')
-        elseif !('#' in slotnames[i] || '@' in slotnames[i])
-            print(emph_io, "  ", slotnames[i], "<optimized out>\n")
-        end
-    end
-    print(emph_io, "\nBody:\n  ")
-    body = Expr(:body)
-    body.args = src.code
-    # Fix slot names and types in function body
-    show_unquoted(IOContext(emph_io, :SOURCEINFO => src, :SOURCE_SLOTNAMES => slotnames),
-                    body, 2)
-    print(emph_io, "::", rettype)
-    print(emph_io, '\n')
-end
-
-function warntype_type_printer(io, ty)
-    if ty !== Union{} && (!isdispatchtuple(Tuple{ty}) || ty == Core.Box)
+function warntype_type_printer(io::IO, @nospecialize(ty))
+    if ty isa Type && (!Base.isdispatchelem(ty) || ty == Core.Box)
         if ty isa Union && Base.is_expected_union(ty)
             Base.emphasize(io, "::$ty", Base.warn_color()) # more mild user notification
         else
@@ -54,6 +12,7 @@ function warntype_type_printer(io, ty)
     else
         Base.printstyled(io, "::$ty", color=:cyan)
     end
+    nothing
 end
 
 """
@@ -71,21 +30,21 @@ in verbose mode, showing all available information (rather than applying
 the usual heuristics).
 See [`@code_warntype`](@ref man-code-warntype) for more information.
 """
-function code_warntype(io::IO, f, @nospecialize(t); verbose_linetable=false)
+function code_warntype(io::IO, @nospecialize(f), @nospecialize(t); verbose_linetable=false)
     for (src, rettype) in code_typed(f, t)
-        if src.codelocs === nothing
-            code_warntype_legacy_ir(io, src, rettype)
-        else
-            print(io, "Body"); warntype_type_printer(io, rettype); println(io);
-            # TODO: static parameter values
-            ir = Core.Compiler.inflate_ir(src, Core.svec())
-            Base.IRShow.show_ir(io, ir, warntype_type_printer;
-                                argnames=Base.sourceinfo_slotnames(src), verbose_linetable=verbose_linetable)
-        end
+        print(io, "Body")
+        warntype_type_printer(io, rettype)
+        println(io)
+        # TODO: static parameter values
+        ir = Core.Compiler.inflate_ir(src, Core.svec())
+        Base.IRShow.show_ir(io, ir, warntype_type_printer;
+                            argnames = Base.sourceinfo_slotnames(src),
+                            verbose_linetable = verbose_linetable)
     end
     nothing
 end
-code_warntype(f, @nospecialize(t); kwargs...) = code_warntype(stdout, f, t; kwargs...)
+code_warntype(@nospecialize(f), @nospecialize(t); kwargs...) =
+    code_warntype(stdout, f, t; kwargs...)
 
 import Base.CodegenParams
 

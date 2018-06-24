@@ -220,6 +220,9 @@ Language changes
     is deprecated. It will likely be reclaimed in a later version for passing keyword
     arguments. Note this does not affect updating operators like `+=` ([#25631]).
 
+  * `try` blocks without `catch` or `finally` are no longer allowed. An explicit empty
+    `catch` block should be written instead ([#27554]).
+
 Breaking changes
 ----------------
 
@@ -508,6 +511,13 @@ This section lists changes that do not have deprecation warnings.
     This change makes `@schedule` redundant with `@async`, so `@schedule` has been
     deprecated ([#27164]).
 
+ * `norm(A::AbstractMatrix, p=2)` computes no longer the operator/matrix norm but the `norm` of `A`
+   as for other iterables, i.e. as if it were a vector. Especially, `norm(A::AbstractMatrix)` is the
+   Frobenius norm. To compute the operator/matrix norm, use the new function `opnorm` ([#27401]).
+
+  * `dot(u, v)` now acts recursively. Instead of `sum(u[i]' * v[i] for i in ...)`, it computes
+    `sum(dot(u[i], v[i]) for i in ...)`, similarly to `vecdot` before ([#27401]).
+
 Library improvements
 --------------------
 
@@ -688,11 +698,17 @@ Library improvements
   * `IOBuffer` can take the `sizehint` keyword argument to suggest a capacity of
     the buffer ([#25944]).
 
+  * `lstrip` and `rstrip` now accept a predicate function that defaults to `isspace`
+    ([#27309]).
+
   * `trunc`, `floor`, `ceil`, and `round` specify `digits`, `sigdigits` and `base` using
     keyword arguments. ([#26156], [#26670])
 
   * `Sys.which()` provides a cross-platform method to find executable files, similar to
     the Unix `which` command. ([#26559])
+
+  * Added an optimized method of `vecdot` for taking the Frobenius inner product
+    of sparse matrices. ([#27470])
 
 Compiler/Runtime improvements
 -----------------------------
@@ -1023,8 +1039,8 @@ Deprecated or removed
 
   * `eu` (previously an alias for `ℯ`) has been deprecated in favor of `ℯ` (or `MathConstants.e`) ([#23427]).
 
-  * `GMP.gmp_version()`, `GMP.GMP_VERSION`, `GMP.gmp_bits_per_limb()`, and `GMP.GMP_BITS_PER_LIBM`
-    have been renamed to `GMP.version()`, `GMP.VERSION`, `GMP.bits_per_libm()`, and `GMP.BITS_PER_LIBM`,
+  * `GMP.gmp_version()`, `GMP.GMP_VERSION`, `GMP.gmp_bits_per_limb()`, and `GMP.GMP_BITS_PER_LIMB`
+    have been renamed to `GMP.version()`, `GMP.VERSION`, `GMP.bits_per_limb()`, and `GMP.BITS_PER_LIMB`,
     respectively. Similarly, `MPFR.get_version()`, has been renamed to `MPFR.version()` ([#23323]). Also,
     `LinAlg.LAPACK.laver()` has been renamed to `LinAlg.LAPACK.version()` and now returns a `VersionNumber`.
 
@@ -1123,9 +1139,6 @@ Deprecated or removed
   * `is_assigned_char` and `normalize_string` have been renamed to `isassigned` and
     `normalize`, and moved to the new `Unicode` standard library module.
     `graphemes` has also been moved to that module ([#25021]).
-
-  * The functions `eigs` and `svds` have been moved to the `IterativeEigensolvers` standard
-    library module ([#24714]).
 
   * Sparse array functionality has moved to the `SparseArrays` standard library module ([#25249]).
 
@@ -1265,6 +1278,14 @@ Deprecated or removed
     [SpecialFunctions.jl](https://github.com/JuliaMath/SpecialFunctions.jl) ([#27459], [#27473]).
 
   * `atan2` is now a 2-argument method of `atan` ([#27248]).
+
+  * The functions `eigs` and `svds` have been moved to the `Arpack.jl` package ([#27616]).
+
+  * `vecdot` and `vecnorm` are deprecated in favor of `dot` and `norm`, respectively ([#27401]).
+
+  * `clipboard` has been moved to the `InteractiveUtils` standard library package
+    (along with other utilities mostly used at the interactive prompt, such as `edit`
+    and `less`) ([#27635]).
 
 Command-line option changes
 ---------------------------
@@ -1602,3 +1623,4 @@ Command-line option changes
 [#27189]: https://github.com/JuliaLang/julia/issues/27189
 [#27212]: https://github.com/JuliaLang/julia/issues/27212
 [#27248]: https://github.com/JuliaLang/julia/issues/27248
+[#27401]: https://github.com/JuliaLang/julia/issues/27401

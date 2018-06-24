@@ -125,10 +125,10 @@ up(pkgs::Vector{String}; kwargs...)            = up([PackageSpec(pkg) for pkg in
 up(pkgs::Vector{PackageSpec}; kwargs...)       = up(Context(), pkgs; kwargs...)
 
 function up(ctx::Context, pkgs::Vector{PackageSpec};
-            level::UpgradeLevel=UPLEVEL_MAJOR, mode::PackageMode=PKGMODE_PROJECT, kwargs...)
+            level::UpgradeLevel=UPLEVEL_MAJOR, mode::PackageMode=PKGMODE_PROJECT, do_update_registry=true, kwargs...)
     Context!(ctx; kwargs...)
     ctx.preview && preview_info()
-    update_registry(ctx)
+    do_update_registry && update_registry(ctx)
     if isempty(pkgs)
         if mode == PKGMODE_PROJECT
             for (name::String, uuidstr::String) in ctx.env.project["deps"]
@@ -151,7 +151,8 @@ function up(ctx::Context, pkgs::Vector{PackageSpec};
     return
 end
 
-resolve() = up(level=UPLEVEL_FIXED)
+resolve(ctx::Context=Context()) =
+    up(ctx, level=UPLEVEL_FIXED, mode=PKGMODE_MANIFEST, do_update_registry=false)
 
 pin(pkg::Union{String, PackageSpec}; kwargs...) = pin([pkg]; kwargs...)
 pin(pkgs::Vector{String}; kwargs...)            = pin([PackageSpec(pkg) for pkg in pkgs]; kwargs...)
@@ -214,6 +215,9 @@ function test(ctx::Context, pkgs::Vector{PackageSpec}; coverage=false, kwargs...
     project_deps_resolve!(ctx.env, pkgs)
     manifest_resolve!(ctx.env, pkgs)
     ensure_resolved(ctx.env, pkgs)
+    if !ctx.preview && (Operations.any_package_not_installed(ctx) || !isfile(ctx.env.manifest_file))
+        Pkg.instantiate(ctx)
+    end
     Operations.test(ctx, pkgs; coverage=coverage)
     return
 end
@@ -229,16 +233,15 @@ function installed(mode::PackageMode=PKGMODE_MANIFEST)
     return version_status
 end
 
-
-function gc(ctx::Context=Context(); period = Dates.Week(6), kwargs...)
+function gc(ctx::Context=Context(); kwargs...)
     function recursive_dir_size(path)
-        sz = 0
+        size = 0
         for (root, dirs, files) in walkdir(path)
             for file in files
-                sz += stat(joinpath(root, file)).size
+                size += stat(joinpath(root, file)).size
             end
         end
-        return sz
+        return size
     end
 
     Context!(ctx; kwargs...)
@@ -246,7 +249,6 @@ function gc(ctx::Context=Context(); period = Dates.Week(6), kwargs...)
     env = ctx.env
 
     # If the manifest was not used
-    gc_time = Dates.now() - period
     usage_file = joinpath(logdir(), "manifest_usage.toml")
 
     # Collect only the manifest that is least recently used
@@ -261,12 +263,17 @@ function gc(ctx::Context=Context(); period = Dates.Week(6), kwargs...)
     # Find all reachable packages through manifests recently used
     new_usage = Dict{String, Any}()
     paths_to_keep = String[]
+    printpkgstyle(ctx, :Active, "manifests at:")
     for (manifestfile, date) in manifest_date
         !isfile(manifestfile) && continue
-        if date < gc_time
-            continue
+        println("        `$manifestfile`")
+        infos = try
+            read_manifest(manifestfile)
+        catch e
+            @warn "Reading manifest file at $manifestfile failed with error" exception = e
+            nothing
         end
-        infos = read_manifest(manifestfile)
+        infos == nothing && continue
         new_usage[manifestfile] = [Dict("time" => date)]
         for entry in infos
             entry isa Pair || continue
@@ -296,13 +303,24 @@ function gc(ctx::Context=Context(); period = Dates.Week(6), kwargs...)
         end
     end
 
+    pretty_byte_str = (size) -> begin
+        bytes, mb = Base.prettyprint_getunits(size, length(Base._mem_units), Int64(1024))
+        return @sprintf("%.3f %s", bytes, Base._mem_units[mb])
+    end
+
     # Delete paths for noreachable package versions and compute size saved
     sz = 0
     for path in paths_to_delete
-        sz += recursive_dir_size(path)
+        sz_pkg = recursive_dir_size(path)
         if !ctx.preview
-            Base.rm(path; recursive=true)
+            try
+                Base.rm(path; recursive=true)
+            catch
+                @warn "Failed to delete $path"
+            end
         end
+        printpkgstyle(ctx, :Deleted, "$path:" * " " * pretty_byte_str(sz_pkg))
+        sz += sz_pkg
     end
 
     # Delete package paths that are now empty
@@ -324,9 +342,9 @@ function gc(ctx::Context=Context(); period = Dates.Week(6), kwargs...)
             TOML.print(io, new_usage, sorted=true)
         end
     end
-    bytes, mb = Base.prettyprint_getunits(sz, length(Base._mem_units), Int64(1024))
-    byte_save_str = length(paths_to_delete) == 0 ? "" : ("saving " * @sprintf("%.3f %s", bytes, Base._mem_units[mb]))
-    @info("Deleted $(length(paths_to_delete)) package installations $byte_save_str")
+    byte_save_str = length(paths_to_delete) == 0 ? "" : (": " * pretty_byte_str(sz))
+    printpkgstyle(ctx, :Deleted, "$(length(paths_to_delete)) package installations $byte_save_str")
+
     ctx.preview && preview_info()
     return
 end
@@ -357,6 +375,7 @@ build(pkgs::Vector{PackageSpec}) = build(Context(), pkgs)
 
 function build(ctx::Context, pkgs::Vector{PackageSpec}; kwargs...)
     Context!(ctx; kwargs...)
+
     ctx.preview && preview_info()
     if isempty(pkgs)
         if ctx.env.pkg !== nothing
@@ -374,6 +393,9 @@ function build(ctx::Context, pkgs::Vector{PackageSpec}; kwargs...)
     project_resolve!(ctx.env, pkgs)
     manifest_resolve!(ctx.env, pkgs)
     ensure_resolved(ctx.env, pkgs)
+    if !ctx.preview && (Operations.any_package_not_installed(ctx) || !isfile(ctx.env.manifest_file))
+        Pkg.instantiate(ctx)
+    end
     uuids = UUID[]
     _get_deps!(ctx, pkgs, uuids)
     length(uuids) == 0 && (@info("no packages to build"); return)
@@ -382,11 +404,15 @@ function build(ctx::Context, pkgs::Vector{PackageSpec}; kwargs...)
     return
 end
 
-init() = init(Context())
+init(; kwargs...) = init(Context(); kwargs...)
 init(path::String) = init(Context(env=EnvCache(path)), path)
-function init(ctx::Context, path::String=pwd())
+function init(ctx::Context, path::String=pwd(); kwargs...)
+    Context!(ctx; kwargs...)
+    ctx.preview && preview_info()
     Context!(ctx; env = EnvCache(joinpath(path, "Project.toml")))
     Operations.init(ctx)
+    activate(path)
+    ctx.preview && preview_info()
     return
 end
 
@@ -520,6 +546,33 @@ function instantiate(ctx::Context; manifest::Union{Bool, Nothing}=nothing, kwarg
     new_git = handle_repos_add!(ctx, pkgs; upgrade_or_add=false)
     new_apply = Operations.apply_versions(ctx, pkgs, hashes, urls)
     Operations.build_versions(ctx, union(new_apply, new_git))
+end
+
+const ACTIVE_ENV = Ref{Union{String,Nothing}}(nothing)
+
+function _activate(env::Union{String,Nothing})
+    if env === nothing
+        @warn "Current directory is not in a project, nothing activated."
+    else
+        if !isempty(LOAD_PATH) && ACTIVE_ENV[] === LOAD_PATH[1]
+            LOAD_PATH[1] = env
+        else
+            # TODO: warn if ACTIVE_ENV !== nothing ?
+            pushfirst!(LOAD_PATH, env)
+        end
+        ACTIVE_ENV[] = env
+    end
+end
+activate() = _activate(Base.current_env())
+activate(path::String) = _activate(Base.current_env(path))
+
+function deactivate()
+    if !isempty(LOAD_PATH) && ACTIVE_ENV[] === LOAD_PATH[1]
+        popfirst!(LOAD_PATH)
+    else
+        # warn if ACTIVE_ENV !== nothing ?
+    end
+    ACTIVE_ENV[] = nothing
 end
 
 end # module

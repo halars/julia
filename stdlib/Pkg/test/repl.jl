@@ -25,9 +25,14 @@ function git_init_package(tmp, path)
 end
 
 
+@testset "generate init args" begin
+    @test_throws CommandError pkg"generate"
+    @test_throws CommandError pkg"init Beep"
+end
+
 mktempdir() do project_path
     cd(project_path) do
-        pushfirst!(LOAD_PATH, Base.parse_load_path("@"))
+        pushfirst!(LOAD_PATH, project_path)
         try
             withenv("USER" => "Test User") do
                 pkg"generate HelloWorld"
@@ -47,6 +52,20 @@ mktempdir() do project_path
 end
 
 temp_pkg_dir() do project_path; cd(project_path) do; mktempdir() do tmp_pkg_path
+    tokens = Pkg.REPLMode.tokenize("add git@github.com:JuliaLang/Example.jl.git")
+    @test tokens[1][2] == "git@github.com:JuliaLang/Example.jl.git"
+    tokens = Pkg.REPLMode.tokenize("add git@github.com:JuliaLang/Example.jl.git#master")
+    @test tokens[1][2] == "git@github.com:JuliaLang/Example.jl.git"
+    @test tokens[1][3].rev == "master"
+    tokens = Pkg.REPLMode.tokenize("add git@github.com:JuliaLang/Example.jl.git#c37b675")
+    @test tokens[1][2] == "git@github.com:JuliaLang/Example.jl.git"
+    @test tokens[1][3].rev == "c37b675"
+    tokens = Pkg.REPLMode.tokenize("add git@github.com:JuliaLang/Example.jl.git@v0.5.0")
+    @test tokens[1][2] == "git@github.com:JuliaLang/Example.jl.git"
+    @test repr(tokens[1][3]) == "VersionRange(\"0.5.0\")"
+    tokens = Pkg.REPLMode.tokenize("add git@github.com:JuliaLang/Example.jl.git@0.5.0")
+    @test tokens[1][2] == "git@github.com:JuliaLang/Example.jl.git"
+    @test repr(tokens[1][3]) == "VersionRange(\"0.5.0\")"
     pkg"init"
     pkg"add Example"
     @test isinstalled(TEST_PKG)
@@ -163,7 +182,7 @@ temp_pkg_dir() do project_path; cd(project_path) do
     end # mktempdir
     # nested
     try
-        pushfirst!(LOAD_PATH, Base.parse_load_path("@"))
+        pushfirst!(LOAD_PATH, "@")
         mktempdir() do other_dir
             mktempdir() do tmp; cd(tmp) do
                 withenv("USER" => "Test User") do
@@ -206,7 +225,7 @@ end
 # Autocompletions
 temp_pkg_dir() do project_path; cd(project_path) do
     try
-        pushfirst!(LOAD_PATH, Base.parse_load_path("@"))
+        pushfirst!(LOAD_PATH, ".")
         Pkg.Types.registries()
         pkg"init"
         c, r = test_complete("add Exam")
@@ -266,24 +285,44 @@ temp_pkg_dir() do project_path; cd(project_path) do
     end
 end end
 
-mktempdir() do tmp
-    cp(joinpath(@__DIR__, "test_packages", "BigProject"), joinpath(tmp, "BigProject"))
-    cd(joinpath(tmp, "BigProject")) do
-        try
-            pushfirst!(LOAD_PATH, Base.parse_load_path("@"))
-            pkg"build"
-            @eval using BigProject
-            pkg"build BigProject"
-            @test_throws CommandError pkg"add BigProject"
-            pkg"test SubModule"
-            pkg"test SubModule2"
-            pkg"test BigProject"
-            pkg"test"
-        finally
-            popfirst!(LOAD_PATH)
+temp_pkg_dir() do project_path; cd(project_path) do
+    mktempdir() do tmp
+        cp(joinpath(@__DIR__, "test_packages", "BigProject"), joinpath(tmp, "BigProject"))
+        cd(joinpath(tmp, "BigProject")) do
+            try
+                pushfirst!(LOAD_PATH, ".")
+                pkg"dev SubModule"
+                pkg"dev SubModule2"
+                pkg"add Random"
+                pkg"add Example"
+                pkg"build"
+                @eval using BigProject
+                pkg"build BigProject"
+                @test_throws CommandError pkg"add BigProject"
+                pkg"test SubModule"
+                pkg"test SubModule2"
+                pkg"test BigProject"
+                pkg"test"
+                current_example = Pkg.API.installed()["Example"]
+                old_project = read("Project.toml", String)
+                open("Project.toml"; append=true) do io
+                    print(io, """
+
+                    [compat]
+                    Example = "0.4.0"
+                    """
+                    )
+                end
+                pkg"up"
+                @test Pkg.API.installed()["Example"].minor == 4
+                write("Project.toml", old_project)
+                pkg"up"
+                @test Pkg.API.installed()["Example"] ==     current_example
+            finally
+                popfirst!(LOAD_PATH)
+            end
         end
     end
-end
-
+end; end
 
 end # module

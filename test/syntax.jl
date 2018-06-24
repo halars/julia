@@ -1368,6 +1368,11 @@ end
 # issue #26717
 @test Meta.lower(@__MODULE__, :( :(:) = 2 )) == Expr(:error, "invalid assignment location \":(:)\"")
 
+# issue #27690
+# previously, this was allowed since it thought `end` was being used for indexing.
+# however the quote should disable that context.
+@test_throws ParseError Meta.parse("Any[:(end)]")
+
 # issue #17781
 let ex = Meta.lower(@__MODULE__, Meta.parse("
     A = function (s, o...)
@@ -1425,3 +1430,20 @@ macro test27155()
     end
 end
 @test @test27155() == (Tuple{T} where T)
+
+# issue #27521
+macro test27521(f, x)
+    :(($(esc(f)), $x))
+end
+let ex = Meta.parse("@test27521(2) do y; y; end")
+    fex = Expr(:(->), Expr(:tuple, :y), Expr(:block, LineNumberNode(1,:none), :y))
+    @test ex == Expr(:do, Expr(:macrocall, Symbol("@test27521"), LineNumberNode(1,:none), 2),
+                     fex)
+    @test macroexpand(@__MODULE__, ex) == Expr(:tuple, fex, 2)
+end
+
+# issue #27129
+f27129(x = 1) = (@Base._inline_meta; x)
+for meth in methods(f27129)
+    @test ccall(:jl_uncompress_ast, Any, (Any, Any), meth, meth.source).inlineable
+end

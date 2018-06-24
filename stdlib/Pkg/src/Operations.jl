@@ -134,8 +134,9 @@ function collect_project!(ctx::Context, pkg::PackageSpec, path::String, fix_deps
     fix_deps_map[pkg.uuid] = valtype(fix_deps_map)()
     !isfile(project_file) && return false
     project = read_project(project_file)
+    compat = get(project, "compat", Dict())
     for (deppkg_name, uuid) in project["deps"]
-        vspec = VersionSpec() # TODO: Update with compatibility from Project
+        vspec = haskey(compat, deppkg_name) ? Types.semver_spec(compat[deppkg_name]) : VersionSpec()
         deppkg = PackageSpec(deppkg_name, UUID(uuid), vspec)
         push!(fix_deps_map[pkg.uuid], deppkg)
     end
@@ -267,20 +268,30 @@ function resolve_versions!(ctx::Context, pkgs::Vector{PackageSpec})::Dict{UUID,V
     for (name::String, uuidstr::String) in ctx.env.project["deps"]
         uuid = UUID(uuidstr)
         uuid_to_name[uuid] = name
-        info = manifest_info(ctx.env, uuid)
-        info == nothing && continue
-        haskey(info, "version") || continue # stdlibs might not have a version
-        ver = VersionNumber(info["version"])
+
         uuid_idx = findfirst(isequal(uuid), uuids)
+        ver = VersionSpec()
         if uuid_idx != nothing
             pkg = pkgs[uuid_idx]
-            if pkg.special_action != PKGSPEC_FREED && get(info, "pinned", false)
-                # This is a pinned package, fix its version
-                pkg.version = ver
+            info = manifest_info(ctx.env, uuid)
+            if info !== nothing && haskey(info, "version") # stdlibs might not have a version
+                ver = VersionNumber(info["version"])
+                    if pkg.special_action != PKGSPEC_FREED && get(info, "pinned", false)
+                        # This is a pinned package, fix its version
+                        pkg.version = ver
+                end
             end
         else
-            push!(pkgs, PackageSpec(name, uuid, ver))
+            pkg = PackageSpec(name, uuid, ver)
+            push!(pkgs, pkg)
         end
+        proj_compat = Types.project_compatibility(ctx, name)
+        v = intersect(pkg.version, proj_compat)
+        if isempty(v)
+            cmderror(string("for package $(pkg.name) intersection between project compatibility $(proj_compat) ",
+                            "and package version $(pkg.version) is empty"))
+        end
+        pkg.version = v
     end
     # construct data structures for resolver and call it
     reqs = Requires(pkg.uuid => VersionSpec(pkg.version) for pkg in pkgs if pkg.uuid ≠ uuid_julia)
@@ -419,22 +430,24 @@ function install_git(
     version::Union{VersionNumber,Nothing},
     version_path::String
 )::Nothing
-    creds = LibGit2.CachedCredentials()
-    clones_dir = joinpath(depots()[1], "clones")
-    ispath(clones_dir) || mkpath(clones_dir)
-    repo_path = joinpath(clones_dir, string(uuid))
-    repo = ispath(repo_path) ? LibGit2.GitRepo(repo_path) : begin
-        GitTools.clone(urls[1], repo_path; isbare=true, header = "[$uuid] $name from $(urls[1])", credentials=creds)
-    end
-    git_hash = LibGit2.GitHash(hash.bytes)
-    for url in urls
-        try LibGit2.with(LibGit2.GitObject, repo, git_hash) do g
-            end
-            break # object was found, we can stop
-        catch err
-            err isa LibGit2.GitError && err.code == LibGit2.Error.ENOTFOUND || rethrow(err)
+    repo, git_hash = Base.shred!(LibGit2.CachedCredentials()) do creds
+        clones_dir = joinpath(depots()[1], "clones")
+        ispath(clones_dir) || mkpath(clones_dir)
+        repo_path = joinpath(clones_dir, string(uuid))
+        repo = ispath(repo_path) ? LibGit2.GitRepo(repo_path) : begin
+            GitTools.clone(urls[1], repo_path; isbare=true, header = "[$uuid] $name from $(urls[1])", credentials=creds)
         end
-        GitTools.fetch(repo, url, refspecs=refspecs, credentials=creds)
+        git_hash = LibGit2.GitHash(hash.bytes)
+        for url in urls
+            try LibGit2.with(LibGit2.GitObject, repo, git_hash) do g
+                end
+                break # object was found, we can stop
+            catch err
+                err isa LibGit2.GitError && err.code == LibGit2.Error.ENOTFOUND || rethrow(err)
+            end
+            GitTools.fetch(repo, url, refspecs=refspecs, credentials=creds)
+        end
+        return repo, git_hash
     end
     tree = try
         LibGit2.GitObject(repo, git_hash)
@@ -518,7 +531,7 @@ function apply_versions(ctx::Context, pkgs::Vector{PackageSpec}, hashes::Dict{UU
         success, path = exc_or_success, bt_or_path
         if success
             vstr = pkg.version != nothing ? "v$(pkg.version)" : "[$h]"
-            printpkgstyle(ctx, :Downloaded, string(rpad(pkg.name * " ", max_name + 2, "─"), " ", vstr))
+            printpkgstyle(ctx, :Installed, string(rpad(pkg.name * " ", max_name + 2, "─"), " ", vstr))
         else
             push!(missed_packages, (pkg, path))
         end
@@ -617,7 +630,7 @@ function update_manifest(ctx::Context, pkg::PackageSpec, hash::Union{SHA1, Nothi
         delete!(info, "repo-rev")
     elseif special_action == PKGSPEC_FREED
         if get(info, "pinned", false)
-           delete!(info, "pinned")
+            delete!(info, "pinned")
         else
             delete!(info, "repo-url")
             delete!(info, "repo-rev")
@@ -659,10 +672,10 @@ function update_manifest(ctx::Context, pkg::PackageSpec, hash::Union{SHA1, Nothi
                 end
                 registry_resolve!(env, dep_pkgs)
                 ensure_resolved(env, dep_pkgs; registry=true)
-                for dep_pkg in dep_pkgs
-                    dep_pkg.name == "julia" && continue
-                    deps[dep_pkg.name] = string(dep_pkg.uuid)
-                end
+            end
+            for dep_pkg in dep_pkgs
+                dep_pkg.name == "julia" && continue
+                deps[dep_pkg.name] = string(dep_pkg.uuid)
             end
         end
         if !isempty(deps)
@@ -715,7 +728,11 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
     need_to_resolve = false
     is_project = Types.is_project(localctx.env, pkg)
 
-    if is_project
+    if is_project # testing the project itself
+        # the project might have changes made to it so need to resolve
+        need_to_resolve = true
+        # Since we will create a temp environment in another place we need to extract the project
+        # and put it in the Project as a normal `deps` entry and in the Manifest with a path.
         foreach(k->delete!(localctx.env.project, k), ("name", "uuid", "version"))
         localctx.env.pkg = nothing
         localctx.env.project["deps"][pkg.name] = string(pkg.uuid)
@@ -723,13 +740,14 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
             "deps" => mainctx.env.project["deps"],
             "uuid" => string(pkg.uuid),
             "path" => dirname(localctx.env.project_file),
+            "version" => string(pkg.version)
         )]
     else
+        # Only put `pkg` and its deps in the temp project
         empty!(localctx.env.project["deps"])
         localctx.env.project["deps"][pkg.name] = string(pkg.uuid)
         info = manifest_info(localctx.env, pkg.uuid)
         need_to_resolve |= haskey(info, "path")
-        deps = PackageSpec[]
         for (dpkg, duuid) in get(info, "deps", [])
             dinfo = manifest_info(localctx.env, UUID(duuid))
             dinfo === nothing || (need_to_resolve |= haskey(info, "path"))
@@ -737,10 +755,19 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
         end
     end
 
+    pkgs = PackageSpec[]
+    target = ""
+    if pkg.special_action == PKGSPEC_TESTED
+        target = "test"
+    end
+    if !isempty(target)
+        collect_target_deps!(localctx, pkgs, pkg, target)
+    end
 
     mktempdir() do tmpdir
         localctx.env.project_file = joinpath(tmpdir, "Project.toml")
         localctx.env.manifest_file = joinpath(tmpdir, "Manifest.toml")
+
         # Rewrite paths in Manifest since relative paths won't work here due to the temporary environment
         for (_, infos) in localctx.env.manifest
             info = infos[1]
@@ -748,30 +775,10 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
                 info["path"] = project_rel_path(mainctx, info["path"])
             end
         end
-        # If pkg has a test only dependency, definitely need to resolve!
-        pkgs = PackageSpec[]
-        if pkg.special_action == PKGSPEC_TESTED
-            if pkg.uuid in keys(localctx.stdlibs)
-                path = Types.stdlib_path(pkg.name)
-            elseif Types.is_project_uuid(localctx.env, pkg.uuid)
-                path = dirname(mainctx.env.project_file)
-            else
-                info = manifest_info(localctx.env, pkg.uuid)
-                path = haskey(info, "path") ? project_rel_path(localctx, info["path"]) : find_installed(pkg.name, pkg.uuid, SHA1(info["git-tree-sha1"]))
-            end
-            test_reqfile = joinpath(path, "test", "REQUIRE")
-            if isfile(test_reqfile)
-                for r in Pkg2.Reqs.read(test_reqfile)
-                    r isa Pkg2.Reqs.Requirement || continue
-                    pkg_name, vspec = r.package, VersionSpec(VersionRange[r.versions.intervals...])
-                    push!(pkgs, PackageSpec(pkg_name, vspec))
-                end
-                is_project && push!(pkgs, mainctx.env.pkg)
-                registry_resolve!(localctx.env, pkgs)
-                ensure_resolved(localctx.env, pkgs; registry=true)
-                add_or_develop(localctx, pkgs)
-                need_to_resolve = false # add resolves
-            end
+
+        if !isempty(pkgs)
+            add_or_develop(localctx, pkgs)
+            need_to_resolve = false # add resolves
         end
 
         local new
@@ -787,6 +794,84 @@ function with_dependencies_loadable_at_toplevel(f, mainctx::Context, pkg::Packag
         sep = Sys.iswindows() ? ';' : ':'
         withenv(f, "JULIA_LOAD_PATH" => "@$sep$tmpdir$sep$(Types.stdlib_dir())")
     end
+end
+
+function collect_target_deps!(ctx::Context, pkgs::Vector{PackageSpec}, pkg::PackageSpec, target::String)
+    # Find the path to the package
+    if pkg.uuid in keys(ctx.stdlibs)
+        path = Types.stdlib_path(pkg.name)
+    elseif Types.is_project_uuid(ctx.env, pkg.uuid)
+        path = dirname(ctx.env.project_file)
+    else
+        info = manifest_info(ctx.env, pkg.uuid)
+        path = haskey(info, "path") ? project_rel_path(ctx, info["path"]) : find_installed(pkg.name, pkg.uuid, SHA1(info["git-tree-sha1"]))
+    end
+
+    project_path = nothing
+    for project_name in Base.project_names
+        project_path_cand = joinpath(path, project_name)
+        if isfile(project_path_cand)
+            project_path = project_path_cand
+            break
+        end
+    end
+    project = nothing
+    if project_path !== nothing
+        project = read_project(project_path)
+    end
+
+    # Pkg2 compatibiity with test/REQUIRE
+    has_project_test_target = false
+    if project !== nothing
+        if haskey(project, "targets")
+            has_project_test_target = true
+        end
+    end
+    if target == "test" && !has_project_test_target
+        pkg2_test_target_compatibility!(ctx, path, pkgs)
+        return
+    end
+
+    # Collect target deps from Project
+    if project !== nothing
+        targets = project["targets"]
+        haskey(targets, target) || return pkgs
+        targets = project["targets"]
+        target_info = targets[target]
+        haskey(target_info, "deps") || return pkgs
+        targets = project["targets"]
+        deps = target_info["deps"]
+        for (pkg, uuid) in deps
+            push!(pkgs, PackageSpec(pkg, UUID(uuid)))
+        end
+    end
+    return nothing
+end
+
+# Pkg2 test/REQUIRE compatibility
+function pkg2_test_target_compatibility!(ctx, path, pkgs)
+    test_reqfile = joinpath(path, "test", "REQUIRE")
+    if isfile(test_reqfile)
+        for r in Pkg2.Reqs.read(test_reqfile)
+            r isa Pkg2.Reqs.Requirement || continue
+            pkg_name, vspec = r.package, VersionSpec(VersionRange[r.versions.intervals...])
+            push!(pkgs, PackageSpec(pkg_name, vspec))
+        end
+        registry_resolve!(ctx.env, pkgs)
+        ensure_resolved(ctx.env, pkgs; registry=true)
+    end
+    return nothing
+end
+
+function any_package_not_installed(ctx)
+    for (pkg, infos) in ctx.env.manifest
+        for info in infos
+            if Base.locate_package(Base.PkgId(UUID(info["uuid"]), pkg)) === nothing
+                return true
+            end
+        end
+    end
+    return false
 end
 
 #########
@@ -820,13 +905,14 @@ end
 function build_versions(ctx::Context, uuids::Vector{UUID}; might_need_to_resolve=false)
     # collect builds for UUIDs with `deps/build.jl` files
     ctx.preview && (printpkgstyle(ctx, :Building, "skipping building in preview mode"); return)
-    builds = Tuple{UUID,String,Union{String,SHA1},String}[]
+    builds = Tuple{UUID,String,Union{String,SHA1},String, VersionNumber}[]
     for uuid in uuids
         uuid in keys(ctx.stdlibs) && continue
         if Types.is_project_uuid(ctx.env, uuid)
             path = dirname(ctx.env.project_file)
             hash_or_path = path
             name = ctx.env.pkg.name
+            version = ctx.env.pkg.version
         else
             info = manifest_info(ctx.env, uuid)
             name = info["name"]
@@ -839,17 +925,18 @@ function build_versions(ctx::Context, uuids::Vector{UUID}; might_need_to_resolve
             else
                 cmderror("Could not find either `git-tree-sha1` or `path` for package $(pkg.name)")
             end
+            version = v"0.0"
         end
         ispath(path) || error("Build path for $name does not exist: $path")
         build_file = joinpath(path, "deps", "build.jl")
-        ispath(build_file) && push!(builds, (uuid, name, hash_or_path, build_file))
+        ispath(build_file) && push!(builds, (uuid, name, hash_or_path, build_file, version))
     end
     # toposort builds by dependencies
     order = dependency_order_uuids(ctx, map(first, builds))
     sort!(builds, by = build -> order[first(build)])
     max_name = isempty(builds) ? 0 : maximum(textwidth.([build[2] for build in builds]))
     # build each package verions in a child process
-    for (uuid, name, hash_or_path, build_file) in builds
+    for (uuid, name, hash_or_path, build_file, version) in builds
         log_file = splitext(build_file)[1] * ".log"
         printpkgstyle(ctx, :Building,
             rpad(name * " ", max_name + 1, "─") * "→ " * Types.pathrepr(ctx, log_file))
@@ -868,12 +955,25 @@ function build_versions(ctx::Context, uuids::Vector{UUID}; might_need_to_resolve
             --eval $code
             ```
         run_build = () -> begin
-            open(log_file, "w") do log
+            ok = open(log_file, "w") do log
                 success(pipeline(cmd, stdout=log, stderr=log))
-            end ? Base.rm(log_file, force=true) :
-                @error("Error building `$name`; see log file for further info")
+            end
+            if !ok
+                n_lines = isinteractive() ? 100 : 5000
+                # TODO: Extract last n  lines more efficiently
+                log_lines = readlines(log_file)
+                log_show = join(log_lines[max(1, length(log_lines) - n_lines):end], '\n')
+                full_log_at, last_lines =
+                if length(log_lines) > n_lines
+                    "\n\nFull log at $log_file",
+                    ", showing the last $n_lines of log"
+                else
+                    "", ""
+                end
+                @error "Error building `$name`$last_lines: \n$log_show$full_log_at"
+            end
         end
-        with_dependencies_loadable_at_toplevel(ctx, PackageSpec(name, uuid); might_need_to_resolve=might_need_to_resolve) do
+        with_dependencies_loadable_at_toplevel(ctx, PackageSpec(name, uuid, version); might_need_to_resolve=might_need_to_resolve) do
             run_build()
         end
     end
@@ -993,6 +1093,7 @@ function up(ctx::Context, pkgs::Vector{PackageSpec})
             append!(new_git, new)
         else
             if info !== nothing
+                pkg.uuid in keys(ctx.stdlibs) && continue
                 ver = VersionNumber(info["version"])
                 if level == UPLEVEL_FIXED
                     pkg.version = VersionNumber(info["version"])
@@ -1055,6 +1156,7 @@ function test(ctx::Context, pkgs::Vector{PackageSpec}; coverage=false)
     for pkg in pkgs
         pkg.special_action = PKGSPEC_TESTED
         if Types.is_project_uuid(ctx.env, pkg.uuid)
+            pkg.version = ctx.env.pkg.version
             version_path = dirname(ctx.env.project_file)
         else
             info = manifest_info(ctx.env, pkg.uuid)
@@ -1129,8 +1231,10 @@ function init(ctx::Context)
     project_file = ctx.env.project_file
     isfile(project_file) &&
         cmderror("Project already initialized at $project_file")
-    mkpath(dirname(project_file))
-    touch(project_file)
+    if !ctx.preview
+        mkpath(dirname(project_file))
+        touch(project_file)
+    end
     printpkgstyle(ctx, :Initialized, "project at " * abspath(project_file))
 end
 

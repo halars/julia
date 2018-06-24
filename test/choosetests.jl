@@ -53,7 +53,7 @@ function choosetests(choices = [])
         "enums", "cmdlineargs", "int",
         "checked", "bitset", "floatfuncs", "precompile", "inline",
         "boundscheck", "error", "ambiguous", "cartesian", "osutils",
-        "channels", "iostream", "specificity", "codegen",
+        "channels", "iostream", "secretbuffer", "specificity", "codegen",
         "reinterpretarray", "syntax", "logging", "missing", "asyncmap"
     ]
 
@@ -156,9 +156,6 @@ function choosetests(choices = [])
         @warn "Running under valgrind: Skipping rounding tests"
         filter!(x -> x != "rounding", tests)
     end
-
-    # The shift and invert solvers need SuiteSparse for sparse input
-    Base.USE_GPL_LIBS || filter!(x->x != "IterativeEigensolvers", STDLIBS)
 
     filter!(!in(skip_tests), tests)
 

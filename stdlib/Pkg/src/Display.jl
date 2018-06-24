@@ -115,7 +115,7 @@ vstring(ctx::Context, a::VerInfo) =
     string((a.ver == nothing && a.hash != nothing) ? "[$(string(a.hash)[1:16])]" : "",
            a.ver != nothing ? "v$(a.ver)" : "",
            a.path != nothing ? " [$(pathrepr(ctx, a.path))]" : "",
-           a.repo != nothing ? " #$(revstring(a.repo.rev)) [$(a.repo.url)]" : "",
+           a.repo != nothing ? " #$(revstring(a.repo.rev)) ($(a.repo.url))" : "",
            a.pinned == true ? " ⚲" : "",
            )
 
@@ -139,7 +139,6 @@ function print_diff(io::IO, ctx::Context, diff::Vector{DiffEntry}, status=false)
     some_packages_not_downloaded = false
     for x in diff
         package_downloaded = Base.locate_package(Base.PkgId(x.uuid, x.name)) !== nothing
-        package_downloaded || (some_packages_not_downloaded = true)
         if x.old != nothing && x.new != nothing
             if x.old ≈ x.new
                 verb = ' '
@@ -174,6 +173,9 @@ function print_diff(io::IO, ctx::Context, diff::Vector{DiffEntry}, status=false)
             printstyled(io, "→", color=:red)
         else
             print(io, " ")
+        end
+        if verb != '-'
+            package_downloaded || (some_packages_not_downloaded = true)
         end
         printstyled(io, " [$(string(x.uuid)[1:8])]"; color = color_dark)
         printstyled(io, "$v $(x.name) $vstr\n"; color = colors[verb])
