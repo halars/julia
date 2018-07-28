@@ -20,6 +20,7 @@ length(@nospecialize t::Tuple) = nfields(t)
 firstindex(@nospecialize t::Tuple) = 1
 lastindex(@nospecialize t::Tuple) = length(t)
 size(@nospecialize(t::Tuple), d) = (d == 1) ? length(t) : throw(ArgumentError("invalid tuple dimension $d"))
+axes(@nospecialize t::Tuple) = OneTo(length(t))
 @eval getindex(t::Tuple, i::Int) = getfield(t, i, $(Expr(:boundscheck)))
 @eval getindex(t::Tuple, i::Real) = getfield(t, convert(Int, i), $(Expr(:boundscheck)))
 getindex(t::Tuple, r::AbstractArray{<:Any,1}) = ([t[ri] for ri in r]...,)
@@ -276,17 +277,29 @@ function _isequal(t1::Any16, t2::Any16)
     return true
 end
 
-==(t1::Tuple, t2::Tuple) = (length(t1) == length(t2)) && _eq(t1, t2, false)
-_eq(t1::Tuple{}, t2::Tuple{}, anymissing) = anymissing ? missing : true
-function _eq(t1::Tuple, t2::Tuple, anymissing)
+==(t1::Tuple, t2::Tuple) = (length(t1) == length(t2)) && _eq(t1, t2)
+_eq(t1::Tuple{}, t2::Tuple{}) = true
+_eq_missing(t1::Tuple{}, t2::Tuple{}) = missing
+function _eq(t1::Tuple, t2::Tuple)
+    eq = t1[1] == t2[1]
+    if eq === false
+        return false
+    elseif ismissing(eq)
+        return _eq_missing(tail(t1), tail(t2))
+    else
+        return _eq(tail(t1), tail(t2))
+    end
+end
+function _eq_missing(t1::Tuple, t2::Tuple)
     eq = t1[1] == t2[1]
     if eq === false
         return false
     else
-        return _eq(tail(t1), tail(t2), anymissing | ismissing(eq))
+        return _eq_missing(tail(t1), tail(t2))
     end
 end
-function _eq(t1::Any16, t2::Any16, anymissing)
+function _eq(t1::Any16, t2::Any16)
+    anymissing = false
     for i = 1:length(t1)
         eq = (t1[i] == t2[i])
         if ismissing(eq)
@@ -394,6 +407,14 @@ any(x::Tuple{}) = false
 any(x::Tuple{Bool}) = x[1]
 any(x::Tuple{Bool, Bool}) = x[1]|x[2]
 any(x::Tuple{Bool, Bool, Bool}) = x[1]|x[2]|x[3]
+
+# equivalent to any(f, t), to be used only in bootstrap
+_tuple_any(f::Function, t::Tuple) = _tuple_any(f, false, t...)
+function _tuple_any(f::Function, tf::Bool, a, b...)
+    @_inline_meta
+    _tuple_any(f, tf | f(a), b...)
+end
+_tuple_any(f::Function, tf::Bool) = tf
 
 """
     empty(x::Tuple)

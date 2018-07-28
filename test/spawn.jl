@@ -451,31 +451,6 @@ end
 @test_throws ArgumentError reduce(&, Base.Cmd[])
 @test reduce(&, [`$echocmd abc`, `$echocmd def`, `$echocmd hij`]) == `$echocmd abc` & `$echocmd def` & `$echocmd hij`
 
-# test for proper handling of FD exhaustion
-if Sys.isunix()
-    let ps = Pipe[]
-        ulimit_n = tryparse(Int, readchomp(`sh -c 'ulimit -n'`))
-        try
-            for i = 1 : 100 * something(ulimit_n, 1000)
-                p = Pipe()
-                Base.link_pipe!(p)
-                push!(ps, p)
-            end
-            if ulimit_n === nothing
-                @warn "`ulimit -n` is set to unlimited, fd exhaustion cannot be tested"
-                @test_broken false
-            else
-                @test false
-            end
-        catch ex
-            isa(ex, Base.UVError) || rethrow(ex)
-            @test ex.code in (Base.UV_EMFILE, Base.UV_ENFILE)
-        finally
-            foreach(close, ps)
-        end
-    end
-end
-
 # readlines(::Cmd), accidentally broken in #20203
 @test sort(readlines(`$lscmd -A`)) == sort(readdir())
 
@@ -501,20 +476,20 @@ let c = `ls -l "foo bar"`
 end
 
 ## Deadlock in spawning a cmd (#22832)
-# FIXME?
-#let out = Pipe(), inpt = Pipe()
-#    Base.link_pipe!(out, reader_supports_async=true)
-#    Base.link_pipe!(inpt, writer_supports_async=true)
-#    p = run(pipeline(catcmd, stdin=inpt, stdout=out, stderr=devnull), wait=false)
-#    @async begin # feed cat with 2 MB of data (zeros)
-#        write(inpt, zeros(UInt8, 1048576 * 2))
-#        close(inpt)
-#    end
-#    sleep(0.5) # give cat a chance to fill the write buffer for stdout
-#    close(out.in) # make sure we can still close the write end
-#    @test sizeof(readstring(out)) == 1048576 * 2 # make sure we get all the data
-#    @test success(p)
-#end
+let out = Pipe(), inpt = Pipe()
+    Base.link_pipe!(out, reader_supports_async=true)
+    Base.link_pipe!(inpt, writer_supports_async=true)
+    p = run(pipeline(catcmd, stdin=inpt, stdout=out, stderr=devnull), wait=false)
+    @async begin # feed cat with 2 MB of data (zeros)
+        write(inpt, zeros(UInt8, 1048576 * 2))
+        close(inpt)
+    end
+    sleep(1) # give cat a chance to fill the write buffer for stdout
+    close(inpt.out)
+    close(out.in) # make sure we can still close the write end
+    @test sizeof(read(out)) == 1048576 * 2 # make sure we get all the data
+    @test success(p)
+end
 
 # `kill` error conditions
 let p = run(`$sleepcmd 100`, wait=false)

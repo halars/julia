@@ -1,8 +1,11 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
+module Furlongs
+
+export Furlong
+
 # Here we implement a minimal dimensionful type Furlong, which is used
-# to test dimensional correctness of various functions in Base.  Furlong
-# is exported by the TestHelpers module.
+# to test dimensional correctness of various functions in Base.
 
 # represents a quantity in furlongs^p
 struct Furlong{p,T<:Number} <: Number
@@ -20,6 +23,8 @@ Base.promote_type(::Type{Furlong{p,T}}, ::Type{Furlong{p,S}}) where {p,T,S} =
 
 Base.one(x::Furlong{p,T}) where {p,T} = one(T)
 Base.one(::Type{Furlong{p,T}}) where {p,T} = one(T)
+Base.oneunit(x::Furlong{p,T}) where {p,T} = Furlong{p,T}(one(T))
+Base.oneunit(x::Type{Furlong{p,T}}) where {p,T} = Furlong{p,T}(one(T))
 Base.zero(x::Furlong{p,T}) where {p,T} = Furlong{p,T}(zero(T))
 Base.zero(::Type{Furlong{p,T}}) where {p,T} = Furlong{p,T}(zero(T))
 Base.iszero(x::Furlong) = iszero(x.val)
@@ -32,19 +37,16 @@ canonical_p(p) = isinteger(p) ? Int(p) : Rational{Int}(p)
 Base.abs(x::Furlong{p}) where {p} = Furlong{p}(abs(x.val))
 @generated Base.abs2(x::Furlong{p}) where {p} = :(Furlong{$(canonical_p(2p))}(abs2(x.val)))
 @generated Base.inv(x::Furlong{p}) where {p} = :(Furlong{$(canonical_p(-p))}(inv(x.val)))
-import LinearAlgebra: sylvester
-sylvester(a::Furlong,b::Furlong,c::Furlong) = -c / (a + b)
 
-for f in (:isfinite, :isnan, :isreal)
+for f in (:isfinite, :isnan, :isreal, :isinf)
     @eval Base.$f(x::Furlong) = $f(x.val)
 end
-for f in (:real,:imag,:complex,:middle,:+,:-)
+for f in (:real,:imag,:complex,:+,:-)
     @eval Base.$f(x::Furlong{p}) where {p} = Furlong{p}($f(x.val))
 end
 
-import Base: +, -, ==, !=, <, <=, isless, isequal, *, /, //, div, rem, mod, ^,
-             middle, hypot
-for op in (:+, :-, :middle, :hypot)
+import Base: +, -, ==, !=, <, <=, isless, isequal, *, /, //, div, rem, mod, ^, hypot
+for op in (:+, :-, :hypot)
     @eval function $op(x::Furlong{p}, y::Furlong{p}) where {p}
         v = $op(x.val, y.val)
         Furlong{p}(v)
@@ -75,3 +77,5 @@ for op in (:rem, :mod)
     end
 end
 Base.sqrt(x::Furlong) = _div(sqrt(x.val), x, Val(2))
+
+end

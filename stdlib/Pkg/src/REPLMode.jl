@@ -8,7 +8,7 @@ using UUIDs
 import REPL
 import REPL: LineEdit, REPLCompletions
 
-import ..devdir, ..Types.casesensitive_isdir
+import ..devdir, ..Types.casesensitive_isdir, ..TOML
 using ..Types, ..Display, ..Operations, ..API
 
 ############
@@ -38,7 +38,6 @@ const cmds = Dict(
     "test"        => CMD_TEST,
     "gc"          => CMD_GC,
     "preview"     => CMD_PREVIEW,
-    "init"        => CMD_INIT,
     "build"       => CMD_BUILD,
     "pin"         => CMD_PIN,
     "free"        => CMD_FREE,
@@ -49,7 +48,6 @@ const cmds = Dict(
     "instantiate" => CMD_INSTANTIATE,
     "resolve"     => CMD_RESOLVE,
     "activate"    => CMD_ACTIVATE,
-    "deactivate"  => CMD_DEACTIVATE,
 )
 
 #################
@@ -63,7 +61,8 @@ end
 # Options #
 ###########
 @enum(OptionKind, OPT_ENV, OPT_PROJECT, OPT_MANIFEST, OPT_MAJOR, OPT_MINOR,
-                  OPT_PATCH, OPT_FIXED, OPT_COVERAGE, OPT_NAME)
+                  OPT_PATCH, OPT_FIXED, OPT_COVERAGE, OPT_NAME,
+                  OPT_LOCAL, OPT_SHARED)
 
 function Types.PackageMode(opt::OptionKind)
     opt == OPT_MANIFEST && return PKGMODE_MANIFEST
@@ -109,6 +108,8 @@ const opts = Dict(
     "fixed"    => OPT_FIXED,
     "coverage" => OPT_COVERAGE,
     "name"     => OPT_NAME,
+    "local"    => OPT_LOCAL,
+    "shared"   => OPT_SHARED,
 )
 
 function parse_option(word::AbstractString)::Option
@@ -129,12 +130,12 @@ let uuid = raw"(?i)[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}(
     global const name_uuid_re = Regex("^$name\\s*=\\s*($uuid)\$")
 end
 
-function parse_package(word::AbstractString; context=nothing)::PackageSpec
+# packages can be identified through: uuid, name, or name+uuid
+# additionally valid for add/develop are: local path, url
+function parse_package(word::AbstractString; add_or_develop=false)::PackageSpec
     word = replace(word, "~" => homedir())
-    if context in (CMD_ADD, CMD_DEVELOP) && casesensitive_isdir(word)
-        pkg = PackageSpec()
-        pkg.repo = Types.GitRepo(abspath(word))
-        return pkg
+    if add_or_develop && casesensitive_isdir(word)
+        return PackageSpec(Types.GitRepo(word))
     elseif occursin(uuid_re, word)
         return PackageSpec(UUID(word))
     elseif occursin(name_re, word)
@@ -142,32 +143,88 @@ function parse_package(word::AbstractString; context=nothing)::PackageSpec
     elseif occursin(name_uuid_re, word)
         m = match(name_uuid_re, word)
         return PackageSpec(String(m.captures[1]), UUID(m.captures[2]))
+    elseif add_or_develop
+        # Guess it is a url then
+        return PackageSpec(Types.GitRepo(word))
     else
-        if context in (CMD_ADD, CMD_DEVELOP)
-            # Guess it is a url then
-            pkg = PackageSpec()
-            pkg.repo = Types.GitRepo(word)
-            return pkg
-        else
-            cmderror("`$word` cannot be parsed as a package")
-        end
+        cmderror("`$word` cannot be parsed as a package")
     end
 end
 
 ################
 # REPL parsing #
 ################
-const lex_re = r"^[\?\./\+\-](?!\-) | ((git|ssh|http(s)?)|(git@[\w\.]+))(:(//)?)([\w\.@\:/\-~]+)(\.git)(/)? | [^@\#\s;]+\s*=\s*[^@\#\s;]+ | \#\s*[^@\#\s;]* | @\s*[^@\#\s;]* | [^@\#\s;]+|;"x
+const lex_re = r"^[\?\./\+\-](?!\-) | ((git|ssh|http(s)?)|(git@[\w\-\.]+))(:(//)?)([\w\.@\:/\-~]+)(\.git)(/)? | [^@\#\s;]+\s*=\s*[^@\#\s;]+ | \#\s*[^@\#\s;]* | @\s*[^@\#\s;]* | [^@\#\s;]+|;"x
 
 const Token = Union{Command, Option, VersionRange, String, Rev}
 
 function tokenize(cmd::String)::Vector{Vector{Token}}
-    words = map(m->m.match, eachmatch(lex_re, cmd))
+    # phase 1: tokenize accoring to whitespace / quotes
+    chunks = parse_quotes(cmd)
+    # phase 2: tokenzie unquoted tokens according to pkg REPL syntax
+    words::Vector{String} = []
+    for chunk in chunks
+        is_quoted = chunk[1]
+        word = chunk[2]
+        if is_quoted
+            push!(words, word)
+        else # break unquoted chunks further according to lexer
+            # note: space before `$word` is necessary to keep using current `lex_re`
+            #                                                 v
+            append!(words, map(m->m.match, eachmatch(lex_re, " $word")))
+        end
+    end
+
     commands = Vector{Token}[]
     while !isempty(words)
         push!(commands, tokenize!(words))
     end
     return commands
+end
+
+function parse_quotes(cmd::String)
+    in_doublequote = false
+    in_singlequote = false
+    all_tokens::Array = []
+    token_in_progress::Array{Char} = []
+
+    push_token!(is_quoted) = begin
+        complete_token = String(token_in_progress)
+        empty!(token_in_progress)
+        push!(all_tokens, (is_quoted, complete_token))
+    end
+
+    for c in cmd
+        if c == '"'
+            if in_singlequote # raw char
+                push!(token_in_progress, c)
+            else # delimiter
+                in_doublequote = !in_doublequote
+                push_token!(true)
+            end
+        elseif c == '\''
+            if in_doublequote # raw char
+                push!(token_in_progress, c)
+            else # delimiter
+                in_singlequote = !in_singlequote
+                push_token!(true)
+            end
+        elseif c == ' ' && !(in_doublequote || in_singlequote)
+            push_token!(false)
+        else
+            push!(token_in_progress, c)
+        end
+    end
+    if (in_doublequote || in_singlequote)
+        ArgumentError("unterminated quote")
+    else
+        push_token!(false)
+    end
+    # to avoid complexity in the main loop, empty tokens are allowed above and
+    # filtered out before returning
+    isnotempty(x) = !isempty(x[2])
+    filter!(isnotempty, all_tokens)
+    return all_tokens
 end
 
 function tokenize!(words::Vector{<:AbstractString})::Vector{Token}
@@ -235,6 +292,22 @@ function do_cmd(repl::REPL.AbstractREPL, input::String; do_rethrow=false)
     end
 end
 
+function enforce_argument_order(tokens::Vector{Token})
+    prev_token = nothing
+    function check_prev_token(valid_type::DataType, error_message::AbstractString)
+        prev_token isa valid_type || cmderror(error_message)
+    end
+
+    for token in tokens
+        if token isa VersionRange
+            check_prev_token(String, "package name/uuid must precede version spec `@$token`")
+        elseif token isa Rev
+            check_prev_token(String, "package name/uuid must precede rev spec `#$(token.rev)`")
+        end
+        prev_token = token
+    end
+end
+
 function do_cmd!(tokens::Vector{Token}, repl)
     cmd = env_opt = nothing
     while !isempty(tokens)
@@ -253,12 +326,21 @@ function do_cmd!(tokens::Vector{Token}, repl)
             cmderror("misplaced token: ", token)
         end
     end
+
+    if cmd.kind == CMD_ACTIVATE
+        return Base.invokelatest(do_activate!, Base.active_project() === nothing ?
+            nothing : EnvCache(env_opt), tokens)
+    end
+
     ctx = Context(env = EnvCache(env_opt))
     if cmd.kind == CMD_PREVIEW
         ctx.preview = true
         isempty(tokens) && cmderror("expected a command to preview")
         cmd = popfirst!(tokens)
     end
+
+    enforce_argument_order(tokens)
+
     # Using invokelatest to hide the functions from inference.
     # Otherwise it would try to infer everything here.
     cmd.kind == CMD_INIT        ? Base.invokelatest(          do_init!, ctx, tokens) :
@@ -278,8 +360,6 @@ function do_cmd!(tokens::Vector{Token}, repl)
     cmd.kind == CMD_RESOLVE     ? Base.invokelatest(       do_resolve!, ctx, tokens) :
     cmd.kind == CMD_PRECOMPILE  ? Base.invokelatest(    do_precompile!, ctx, tokens) :
     cmd.kind == CMD_INSTANTIATE ? Base.invokelatest(   do_instantiate!, ctx, tokens) :
-    cmd.kind == CMD_ACTIVATE    ? Base.invokelatest(      do_activate!, ctx, tokens) :
-    cmd.kind == CMD_DEACTIVATE  ? Base.invokelatest(    do_deactivate!, ctx, tokens) :
         cmderror("`$cmd` command not yet implemented")
     return
 end
@@ -331,10 +411,8 @@ What action you want the package manager to take:
 
 `instantiate`: downloads all the dependencies for the project
 
-`resolve`: resolves to update the manifest from changes in dependencis of
+`resolve`: resolves to update the manifest from changes in dependencies of
 developed packages
-
-`init`: initializes an environment in the current, or git base, directory
 
 `generate`: generate files for a new project
 
@@ -345,8 +423,6 @@ developed packages
 `gc`: garbage collect packages not used for a significant time
 
 `activate`: set the primary environment the package manager manipulates
-
-`deactivate`: unset the primary environment the package manager manipulates
 """
 
 const helps = Dict(
@@ -360,7 +436,7 @@ const helps = Dict(
 
     Display usage information for commands listed.
 
-    Available commands: `help`, `status`, `add`, `rm`, `up`, `preview`, `gc`, `test`, `init`, `build`, `free`, `pin`, `develop`.
+    Available commands: `help`, `status`, `add`, `rm`, `up`, `preview`, `gc`, `test`, `build`, `free`, `pin`, `develop`.
     """, CMD_STATUS => md"""
 
         status
@@ -371,13 +447,13 @@ const helps = Dict(
     the project file is summarized, showing what version each package is on and
     how it has changed since the last git commit (if in a git repo), as well as
     any changes to manifest packages not already listed. In `--project` mode, the
-    status of the project file is summarized. In `--project` mode, the status of
-    the project file is summarized.
+    status of the project file is summarized. In `--manifest` mode the output also
+    includes the dependencies of explicitly added packages.
     """, CMD_GENERATE => md"""
 
-        create name
+        generate pkgname
 
-    Create a project called `name` in the current folder.
+    Create a project called `pkgname` in the current folder.
     """,
     CMD_ADD => md"""
 
@@ -456,12 +532,6 @@ const helps = Dict(
     """, CMD_GC => md"""
 
     Deletes packages that cannot be reached from any existing environment.
-    """, CMD_INIT => md"""
-
-        init
-
-    Creates an environment in the current directory, or the git base directory if the current directory
-    is in a git repository.
     """, CMD_BUILD =>md"""
 
         build pkg[=uuid] ...
@@ -480,11 +550,13 @@ const helps = Dict(
     Free a pinned package `pkg`, which allows it to be upgraded or downgraded again. If the package is checked out (see `help develop`) then this command
     makes the package no longer being checked out.
     """, CMD_DEVELOP => md"""
-        develop pkg[=uuid] [#rev] ...
+        develop [--shared|--local] pkg[=uuid] [#rev] ...
 
     Make a package available for development. If `pkg` is an existing local path that path will be recorded in
-    the manifest and used. Otherwise, a full git clone of `pkg` at rev `rev` is made. The clone is stored in `devdir`,
-    which defaults to `~/.julia/dev` and is set by the environment variable `JULIA_PKG_DEVDIR`.
+    the manifest and used. Otherwise, a full git clone of `pkg` at rev `rev` is made. The location of the clone is
+    controlled by the `--shared` (default) and `--local` arguments. The `--shared` location defaults to
+    `~/.julia/dev`, but can be controlled with the `JULIA_PKG_DEVDIR` environment variable. When `--local` is given,
+    the clone is placed in a `dev` folder in the current project.
     This operation is undone by `free`.
 
     *Example*
@@ -493,6 +565,7 @@ const helps = Dict(
     pkg> develop Example#master
     pkg> develop Example#c37b675
     pkg> develop https://github.com/JuliaLang/Example.jl#master
+    pkg> develop --local Example
     ```
     """, CMD_PRECOMPILE => md"""
         precompile
@@ -566,25 +639,19 @@ end
 
 function do_add_or_develop!(ctx::Context, tokens::Vector{Token}, cmd::CommandKind)
     @assert cmd in (CMD_ADD, CMD_DEVELOP)
+    mode = cmd == CMD_ADD ? :add : :develop
     # tokens: package names and/or uuids, optionally followed by version specs
     isempty(tokens) &&
-        cmderror("`add` – list packages to add")
+        cmderror("`$mode` – list packages to $mode")
     pkgs = PackageSpec[]
-    prev_token_was_package = false
+    dev_mode = OPT_SHARED # TODO: Make this default configurable
     while !isempty(tokens)
-        parsed_package = false
         token = popfirst!(tokens)
         if token isa String
-            push!(pkgs, parse_package(token; context=CMD_ADD))
-            cmd == CMD_DEVELOP && pkgs[end].repo == nothing && (pkgs[end].repo = Types.GitRepo("", ""))
-            parsed_package = true
+            push!(pkgs, parse_package(token; add_or_develop=true))
         elseif token isa VersionRange
-            prev_token_was_package ||
-                cmderror("package name/uuid must precede version spec `@$token`")
             pkgs[end].version = VersionSpec(token)
         elseif token isa Rev
-            prev_token_was_package ||
-                cmderror("package name/uuid must precede rev spec `#$(token.rev)`")
             # WE did not get the repo from the
             pkg = pkgs[end]
             if pkg.repo == nothing
@@ -593,11 +660,16 @@ function do_add_or_develop!(ctx::Context, tokens::Vector{Token}, cmd::CommandKin
                 pkgs[end].repo.rev = token.rev
             end
         elseif token isa Option
-            cmderror("`add` doesn't take options: $token")
+            if mode === :develop && token.kind in (OPT_LOCAL, OPT_SHARED)
+                dev_mode = token.kind
+            else
+                cmderror("`$mode` doesn't take options: $token")
+            end
         end
-        prev_token_was_package = parsed_package
     end
-    return API.add_or_develop(ctx, pkgs, mode=(cmd == CMD_ADD ? :add : :develop))
+    dev_dir = mode === :add ? nothing : dev_mode == OPT_LOCAL ?
+        joinpath(dirname(ctx.env.project_file), "dev") : nothing
+    return API.add_or_develop(ctx, pkgs, mode=mode, devdir=dev_dir)
 end
 
 function do_up!(ctx::Context, tokens::Vector{Token})
@@ -607,18 +679,13 @@ function do_up!(ctx::Context, tokens::Vector{Token})
     pkgs = PackageSpec[]
     mode = PKGMODE_PROJECT
     level = UPLEVEL_MAJOR
-    prev_token_was_package = false
     while !isempty(tokens)
-        parsed_package = false
         token = popfirst!(tokens)
         if token isa String
             push!(pkgs, parse_package(token))
             pkgs[end].version = level
             pkgs[end].mode = mode
-            parsed_package = true
         elseif token isa VersionRange
-            prev_token_was_package ||
-                cmderror("package name/uuid must precede version spec `@$token`")
             pkgs[end].version = VersionSpec(token)
         elseif token isa Option
             if token.kind in (OPT_PROJECT, OPT_MANIFEST)
@@ -629,23 +696,17 @@ function do_up!(ctx::Context, tokens::Vector{Token})
                 cmderror("invalid option for `up`: $(token)")
             end
         end
-        prev_token_was_package = parsed_package
     end
     API.up(ctx, pkgs; level=level, mode=mode)
 end
 
 function do_pin!(ctx::Context, tokens::Vector{Token})
     pkgs = PackageSpec[]
-    prev_token_was_package = false
     while !isempty(tokens)
         token = popfirst!(tokens)
-        parsed_package = false
         if token isa String
             push!(pkgs, parse_package(token))
-            parsed_package = true
         elseif token isa VersionRange
-            prev_token_was_package ||
-                cmderror("package name/uuid must precede version spec `@$token`")
             if token.lower != token.upper
                 cmderror("pinning a package requires a single version, not a versionrange")
             end
@@ -653,7 +714,6 @@ function do_pin!(ctx::Context, tokens::Vector{Token})
         else
             cmderror("free only takes a list of packages ")
         end
-        prev_token_was_package = parsed_package
     end
     API.pin(ctx, pkgs)
 end
@@ -730,26 +790,12 @@ function do_build!(ctx::Context, tokens::Vector{Token})
     API.build(ctx, pkgs)
 end
 
-function do_init!(ctx::Context, tokens::Vector{Token})
-    if !isempty(tokens)
-        cmderror("`init` does currently not take any arguments")
-    end
-    API.init(ctx)
-end
-
 function do_generate!(ctx::Context, tokens::Vector{Token})
     isempty(tokens) && cmderror("`generate` requires a project name as an argument")
-    local pkg
-    while !isempty(tokens)
-        token = popfirst!(tokens)
-        if token isa String
-            pkg = token
-            break # TODO: error message?
-        else
-            cmderror("`generate` takes a name of the project to create")
-        end
-    end
-    API.generate(ctx, pkg)
+    token = popfirst!(tokens)
+    token isa String || cmderror("`generate` takes a name of the project to create")
+    isempty(tokens) || cmderror("`generate` takes a single project name as an argument")
+    API.generate(ctx, token)
 end
 
 function do_precompile!(ctx::Context, tokens::Vector{Token})
@@ -782,21 +828,32 @@ function do_resolve!(ctx::Context, tokens::Vector{Token})
     API.resolve(ctx)
 end
 
-function do_activate!(ctx::Context, tokens::Vector{Token})
+function do_activate!(env::Union{EnvCache,Nothing}, tokens::Vector{Token})
     if isempty(tokens)
         return API.activate()
     else
-        token = popfirst!(tokens)
-        if !isempty(tokens) || !(token isa String)
+        path = popfirst!(tokens)
+        if !isempty(tokens) || !(path isa String)
             cmderror("`activate` takes an optional path to the env to activate")
         end
-        return API.activate(abspath(token))
+        devpath = nothing
+        if env !== nothing && haskey(env.project["deps"], path)
+            uuid = UUID(env.project["deps"][path])
+            info = manifest_info(env, uuid)
+            devpath = haskey(info, "path") ? joinpath(dirname(env.project_file), info["path"]) : nothing
+        end
+        # `pkg> activate path` does the following
+        # 1. if path exists, activate that
+        # 2. if path exists in deps, and the dep is deved, activate that path (`devpath` above)
+        # 3. activate the non-existing directory (e.g. as in `pkg> activate .` for initing a new env)
+        if Types.isdir_windows_workaround(path)
+            API.activate(abspath(path))
+        elseif devpath !== nothing
+            API.activate(abspath(devpath))
+        else
+            API.activate(abspath(path))
+        end
     end
-end
-
-function do_deactivate!(ctx::Context, tokens::Vector{Token})
-    !isempty(tokens) && cmderror("`deactivate` does not take any arguments")
-    API.deactivate()
 end
 
 ######################
@@ -871,18 +928,30 @@ function complete_installed_package(s, i1, i2, project_opt)
 end
 
 function complete_remote_package(s, i1, i2)
-    cmp = filter(cmd -> startswith(cmd, s), collect_package_names())
-    return cmp, i1:i2, !isempty(cmp)
-end
-
-function collect_package_names()
-    r = r"name = \"(.*?)\""
-    names = String[]
+    cmp = String[]
+    julia_version = VERSION
     for reg in Types.registries(;clone_default=false)
-        regcontent = read(joinpath(reg, "Registry.toml"), String)
-        append!(names, collect(match.captures[1] for match in eachmatch(r, regcontent)))
+        data = Types.read_registry(joinpath(reg, "Registry.toml"))
+        for (uuid, pkginfo) in data["packages"]
+            name = pkginfo["name"]
+            if startswith(name, s)
+                compat_data = Operations.load_package_data_raw(
+                    VersionSpec, joinpath(reg, pkginfo["path"], "Compat.toml"))
+                supported_julia_versions = VersionSpec(VersionRange[])
+                for (ver_range, compats) in compat_data
+                    for (compat, v) in compats
+                        if compat == "julia"
+                            union!(supported_julia_versions, VersionSpec(v))
+                        end
+                    end
+                end
+                if VERSION in supported_julia_versions
+                    push!(cmp, name)
+                end
+            end
+        end
     end
-    return sort!(names)
+    return cmp, i1:i2, !isempty(cmp)
 end
 
 function completions(full, index)
@@ -935,29 +1004,48 @@ function completions(full, index)
     end
 end
 
+prev_project_file = nothing
+prev_project_timestamp = nothing
+prev_prefix = ""
+
 function promptf()
-    env = try
-        EnvCache()
+    global prev_project_timestamp, prev_prefix, prev_project_file
+    project_file = try
+        project_file = Base.active_project()
     catch
         nothing
     end
     prefix = ""
-    if env !== nothing
-        proj_dir = dirname(env.project_file)
-        if startswith(pwd(), proj_dir) && env.pkg != nothing && !isempty(env.pkg.name)
-            name = env.pkg.name
+    if project_file !== nothing
+        if prev_project_file == project_file && prev_project_timestamp == mtime(project_file)
+            prefix = prev_prefix
         else
-            name = basename(proj_dir)
+            project = try
+                Types.read_project(project_file)
+            catch
+                nothing
+            end
+            if project !== nothing
+                proj_dir = ispath(project_file) ? realpath(project_file) : project_file
+                proj_dir = dirname(proj_dir)
+                projname = get(project, "name", nothing)
+                if startswith(pwd(), proj_dir) && projname !== nothing
+                    name = projname
+                else
+                    name = basename(proj_dir)
+                end
+                prefix = string("(", name, ") ")
+                prev_prefix = prefix
+                prev_project_timestamp = mtime(project_file)
+                prev_project_file = project_file
+            end
         end
-        prefix = string("(", name, ") ")
     end
     return prefix * "pkg> "
 end
 
 # Set up the repl Pkg REPLMode
 function create_mode(repl, main)
-
-
     pkg_mode = LineEdit.Prompt(promptf;
         prompt_prefix = Base.text_colors[:blue],
         prompt_suffix = "",

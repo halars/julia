@@ -410,6 +410,7 @@ void JuliaOJIT::DebugObjectRegistrar::registerObject(RTDyldObjHandleT H, const O
         NotifyGDB(SavedObject);
     }
 
+    JIT.NotifyFinalizer(*Object, *LO);
     SavedObjects.push_back(std::move(SavedObject));
 
     ORCNotifyObjectEmitted(JuliaListener.get(), *Object,
@@ -630,9 +631,9 @@ void JuliaOJIT::addModule(std::unique_ptr<Module> M)
 void JuliaOJIT::removeModule(ModuleHandleT H)
 {
 #if JL_LLVM_VERSION >= 50000
-    CompileLayer.removeModule(H);
+    (void)CompileLayer.removeModule(H);
 #else
-    CompileLayer.removeModuleSet(H);
+    (void)CompileLayer.removeModuleSet(H);
 #endif
 }
 
@@ -681,7 +682,16 @@ Function *JuliaOJIT::FindFunctionNamed(const std::string &Name)
 
 void JuliaOJIT::RegisterJITEventListener(JITEventListener *L)
 {
-    // TODO
+    if (!L)
+        return;
+    EventListeners.push_back(L);
+}
+
+void JuliaOJIT::NotifyFinalizer(const object::ObjectFile &Obj,
+                                const RuntimeDyld::LoadedObjectInfo &LoadedObjectInfo)
+{
+    for (auto &Listener : EventListeners)
+        Listener->NotifyObjectEmitted(Obj, LoadedObjectInfo);
 }
 
 const DataLayout& JuliaOJIT::getDataLayout() const

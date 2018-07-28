@@ -162,8 +162,8 @@ Base.datatype_pointerfree
 ```@docs
 Base.typemin
 Base.typemax
-Base.realmin
-Base.realmax
+Base.floatmin
+Base.floatmax
 Base.maxintfloat
 Base.eps(::Type{<:AbstractFloat})
 Base.eps(::AbstractFloat)
@@ -213,12 +213,15 @@ Base.@boundscheck
 Base.@inline
 Base.@noinline
 Base.@nospecialize
+Base.@specialize
 Base.gensym
 Base.@gensym
 Base.@goto
 Base.@label
 Base.@simd
 Base.@polly
+Base.@generated
+Base.@pure
 ```
 
 ## Missing Values
@@ -288,6 +291,7 @@ Base.@assert
 Base.ArgumentError
 Base.AssertionError
 Core.BoundsError
+Base.CompositeException
 Base.DimensionMismatch
 Core.DivideError
 Core.DomainError

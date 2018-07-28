@@ -577,7 +577,7 @@ static Value *julia_to_address(
                 }
                 ai->setAlignment(16);
                 // minimum gc-alignment in julia is pointer size
-                emit_memcpy(ctx, ai, jvinfo, nbytes, sizeof(void*));
+                emit_memcpy(ctx, ai, jvinfo.tbaa, jvinfo, nbytes, sizeof(void*));
                 return ctx.builder.CreatePtrToInt(ai, to);
             }
         }
@@ -596,7 +596,7 @@ static Value *julia_to_address(
         Value *nbytes = emit_datatype_size(ctx, jvt);
         AllocaInst *ai = ctx.builder.CreateAlloca(T_int8, nbytes);
         ai->setAlignment(16);
-        emit_memcpy(ctx, ai, jvinfo, nbytes, sizeof(void*)); // minimum gc-alignment in julia is pointer size
+        emit_memcpy(ctx, ai, jvinfo.tbaa, jvinfo, nbytes, sizeof(void*)); // minimum gc-alignment in julia is pointer size
         Value *p2 = ctx.builder.CreatePtrToInt(ai, to);
         ctx.builder.CreateBr(afterBB);
         ctx.builder.SetInsertPoint(afterBB);
@@ -611,10 +611,10 @@ static Value *julia_to_address(
     // since those are immutable.
     Value *slot = emit_static_alloca(ctx, slottype);
     if (!jvinfo.ispointer()) {
-        ctx.builder.CreateStore(emit_unbox(ctx, slottype, jvinfo, ety), slot);
+        tbaa_decorate(jvinfo.tbaa, ctx.builder.CreateStore(emit_unbox(ctx, slottype, jvinfo, ety), slot));
     }
     else {
-        emit_memcpy(ctx, slot, jvinfo, jl_datatype_size(ety), jl_datatype_align(ety));
+        emit_memcpy(ctx, slot, jvinfo.tbaa, jvinfo, jl_datatype_size(ety), jl_datatype_align(ety));
     }
     return ctx.builder.CreatePtrToInt(slot, to);
 }
@@ -646,10 +646,10 @@ static Value *julia_to_native(
     // since those are immutable.
     Value *slot = emit_static_alloca(ctx, to);
     if (!jvinfo.ispointer()) {
-        ctx.builder.CreateStore(emit_unbox(ctx, to, jvinfo, jlto), slot);
+        tbaa_decorate(jvinfo.tbaa, ctx.builder.CreateStore(emit_unbox(ctx, to, jvinfo, jlto), slot));
     }
     else {
-        emit_memcpy(ctx, slot, jvinfo, jl_datatype_size(jlto), jl_datatype_align(jlto));
+        emit_memcpy(ctx, slot, jvinfo.tbaa, jvinfo, jl_datatype_size(jlto), jl_datatype_align(jlto));
     }
     return slot;
 }
@@ -960,10 +960,25 @@ static jl_cgval_t emit_llvmcall(jl_codectx_t &ctx, jl_value_t **args, size_t nar
 {
     JL_NARGSV(llvmcall, 3);
     jl_value_t *rt = NULL, *at = NULL, *ir = NULL, *decl = NULL;
+    jl_value_t *ir_arg = args[1];
     JL_GC_PUSH4(&ir, &rt, &at, &decl);
-    at = try_eval(ctx, args[3], "error statically evaluating llvmcall argument tuple");
-    rt = try_eval(ctx, args[2], "error statically evaluating llvmcall return type");
-    ir = try_eval(ctx, args[1], "error statically evaluating llvm IR argument");
+    if (jl_is_ssavalue(ir_arg))
+        ir_arg = jl_arrayref((jl_array_t*)ctx.source->code, ((jl_ssavalue_t*)ir_arg)->id - 1);
+    ir = try_eval(ctx, ir_arg, "error statically evaluating llvm IR argument");
+    if (jl_is_ssavalue(args[2])) {
+        jl_value_t *rtt = jl_arrayref((jl_array_t*)ctx.source->ssavaluetypes, ((jl_ssavalue_t*)args[2])->id - 1);
+        if (jl_is_type_type(rtt))
+            rt = jl_tparam0(rtt);
+    }
+    if (rt == NULL)
+        rt = try_eval(ctx, args[2], "error statically evaluating llvmcall return type");
+    if (jl_is_ssavalue(args[3])) {
+        jl_value_t *att = jl_arrayref((jl_array_t*)ctx.source->ssavaluetypes, ((jl_ssavalue_t*)args[3])->id - 1);
+        if (jl_is_type_type(att))
+            at = jl_tparam0(att);
+    }
+    if (at == NULL)
+        at = try_eval(ctx, args[3], "error statically evaluating llvmcall argument tuple");
     int i = 1;
     if (jl_is_tuple(ir)) {
         // if the IR is a tuple, we expect (declarations, ir)
@@ -2096,7 +2111,7 @@ jl_cgval_t function_sig_t::emit_a_ccall(
                     auto slot = emit_static_alloca(ctx, resultTy);
                     slot->setAlignment(boxalign);
                     ctx.builder.CreateAlignedStore(result, slot, boxalign);
-                    emit_memcpy(ctx, strct, slot, rtsz, boxalign, tbaa);
+                    emit_memcpy(ctx, strct, tbaa, slot, tbaa, rtsz, boxalign, tbaa);
                 }
                 else {
                     init_bits_value(ctx, strct, result, tbaa, boxalign);

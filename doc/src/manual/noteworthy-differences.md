@@ -69,7 +69,7 @@ may trip up Julia users accustomed to MATLAB:
   * In both Julia and MATLAB, the variable `ans` is set to the value of the last expression issued
     in an interactive session. In Julia, unlike MATLAB, `ans` is not set when Julia code is run in
     non-interactive mode.
-  * Julia's `type`s do not support dynamically adding fields at runtime, unlike MATLAB's `class`es.
+  * Julia's `struct`s do not support dynamically adding fields at runtime, unlike MATLAB's `class`es.
     Instead, use a [`Dict`](@ref).
   * In Julia each module has its own global scope/namespace, whereas in MATLAB there is just one global
     scope.
@@ -293,7 +293,7 @@ For users coming to Julia from R, these are some noteworthy differences:
   * Julia macros operate on parsed expressions, rather than the text of the program, which allows
     them to perform sophisticated transformations of Julia code. Macro names start with the `@` character,
     and have both a function-like syntax, `@mymacro(arg1, arg2, arg3)`, and a statement-like syntax,
-    `@mymacro arg1 arg2 arg3`. The forms are interchangable; the function-like form is particularly
+    `@mymacro arg1 arg2 arg3`. The forms are interchangeable; the function-like form is particularly
     useful if the macro appears within another expression, and is often clearest. The statement-like
     form is often used to annotate blocks, as in the distributed `for` construct: `@distributed for i in 1:n; #= body =#; end`.
     Where the end of the macro construct may be unclear, use the function-like form.

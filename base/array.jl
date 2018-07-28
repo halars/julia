@@ -71,8 +71,33 @@ Union type of [`Vector{T}`](@ref) and [`Matrix{T}`](@ref).
 """
 const VecOrMat{T} = Union{Vector{T}, Matrix{T}}
 
+"""
+    DenseArray{T, N} <: AbstractArray{T,N}
+
+`N`-dimensional dense array with elements of type `T`.
+The elements of a dense array are stored contiguously in memory.
+"""
+DenseArray
+
+"""
+    DenseVector{T}
+
+One-dimensional [`DenseArray`](@ref) with elements of type `T`. Alias for `DenseArray{T,1}`.
+"""
 const DenseVector{T} = DenseArray{T,1}
+
+"""
+    DenseMatrix{T}
+
+Two-dimensional [`DenseArray`](@ref) with elements of type `T`. Alias for `DenseArray{T,2}`.
+"""
 const DenseMatrix{T} = DenseArray{T,2}
+
+"""
+    DenseVecOrMat{T}
+
+Union type of [`DenseVector{T}`](@ref) and [`DenseMatrix{T}`](@ref).
+"""
 const DenseVecOrMat{T} = Union{DenseVector{T}, DenseMatrix{T}}
 
 ## Basic functions ##
@@ -147,7 +172,7 @@ julia> Base.isbitsunion(Union{Float64, String})
 false
 ```
 """
-isbitsunion(u::Union) = ccall(:jl_array_store_unboxed, Cint, (Any,), u) == Cint(1)
+isbitsunion(u::Union) = ccall(:jl_array_store_unboxed, Cint, (Any,), u) != Cint(0)
 isbitsunion(x) = false
 
 """
@@ -167,7 +192,7 @@ julia> Base.bitsunionsize(Union{Float64, UInt8, Int128})
 function bitsunionsize(u::Union)
     sz = Ref{Csize_t}(0)
     algn = Ref{Csize_t}(0)
-    @assert ccall(:jl_islayout_inline, Cint, (Any, Ptr{Csize_t}, Ptr{Csize_t}), u, sz, algn) == Cint(1)
+    @assert ccall(:jl_islayout_inline, Cint, (Any, Ptr{Csize_t}, Ptr{Csize_t}), u, sz, algn) != Cint(0)
     return sz[]
 end
 
@@ -222,8 +247,8 @@ function unsafe_copyto!(dest::Array{T}, doffs, src::Array{T}, soffs, n) where T
               pointer(dest, doffs), pointer(src, soffs), n * Base.bitsunionsize(T))
         # copy selector bytes
         ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, UInt),
-              convert(Ptr{UInt8}, pointer(dest)) + length(dest) * Base.bitsunionsize(T) + doffs - 1,
-              convert(Ptr{UInt8}, pointer(src)) + length(src) * Base.bitsunionsize(T) + soffs - 1,
+              ccall(:jl_array_typetagdata, Ptr{UInt8}, (Any,), dest) + doffs - 1,
+              ccall(:jl_array_typetagdata, Ptr{UInt8}, (Any,), src) + soffs - 1,
               n)
     else
         ccall(:jl_array_ptr_copy, Cvoid, (Any, Ptr{Cvoid}, Any, Ptr{Cvoid}, Int),
@@ -445,6 +470,7 @@ for (fname, felt) in ((:zeros, :zero), (:ones, :one))
 end
 
 function _one(unit::T, x::AbstractMatrix) where T
+    @assert !has_offset_axes(x)
     m,n = size(x)
     m==n || throw(DimensionMismatch("multiplicative identity defined only for square matrices"))
     # Matrix{T}(I, m, m)
@@ -547,9 +573,9 @@ end
 
 _collect_indices(::Tuple{}, A) = copyto!(Array{eltype(A),0}(undef), A)
 _collect_indices(indsA::Tuple{Vararg{OneTo}}, A) =
-    copyto!(Array{eltype(A)}(undef, _length.(indsA)), A)
+    copyto!(Array{eltype(A)}(undef, length.(indsA)), A)
 function _collect_indices(indsA, A)
-    B = Array{eltype(A)}(undef, _length.(indsA))
+    B = Array{eltype(A)}(undef, length.(indsA))
     copyto!(B, CartesianIndices(axes(B)), A, CartesianIndices(indsA))
 end
 
@@ -677,10 +703,8 @@ function grow_to!(dest, itr, st)
 end
 
 ## Iteration ##
-function iterate(A::Array, i=1)
-    @_propagate_inbounds_meta
-    i >= length(A) + 1 ? nothing : (A[i], i+1)
-end
+
+iterate(A::Array, i=1) = (@_inline_meta; (i % UInt) - 1 < length(A) ? (@inbounds A[i], i + 1) : nothing)
 
 ## Indexing: getindex ##
 
@@ -750,6 +774,7 @@ function setindex! end
 function setindex!(A::Array, X::AbstractArray, I::AbstractVector{Int})
     @_propagate_inbounds_meta
     @boundscheck setindex_shape_check(X, length(I))
+    @assert !has_offset_axes(X)
     X′ = unalias(A, X)
     I′ = unalias(A, I)
     count = 1
@@ -868,7 +893,7 @@ themselves in another collection. The result is of the preceding example is equi
 """
 function append!(a::Array{<:Any,1}, items::AbstractVector)
     itemindices = eachindex(items)
-    n = _length(itemindices)
+    n = length(itemindices)
     _growend!(a, n)
     copyto!(a, length(a)-n+1, items, first(itemindices), n)
     return a
@@ -878,6 +903,7 @@ append!(a::Vector, iter) = _append!(a, IteratorSize(iter), iter)
 push!(a::Vector, iter...) = append!(a, iter)
 
 function _append!(a, ::Union{HasLength,HasShape}, iter)
+    @assert !has_offset_axes(a)
     n = length(a)
     resize!(a, n+length(iter))
     @inbounds for (i,item) in zip(n+1:length(a), iter)
@@ -911,7 +937,7 @@ function prepend! end
 
 function prepend!(a::Array{<:Any,1}, items::AbstractVector)
     itemindices = eachindex(items)
-    n = _length(itemindices)
+    n = length(itemindices)
     _growbeg!(a, n)
     if a === items
         copyto!(a, 1, items, n+1, n)
@@ -925,6 +951,7 @@ prepend!(a::Vector, iter) = _prepend!(a, IteratorSize(iter), iter)
 pushfirst!(a::Vector, iter...) = prepend!(a, iter)
 
 function _prepend!(a, ::Union{HasLength,HasShape}, iter)
+    @assert !has_offset_axes(a)
     n = length(iter)
     _growbeg!(a, n)
     i = 0
@@ -1512,7 +1539,7 @@ function vcat(arrays::Vector{T}...) where T
         elsz = Core.sizeof(T)
     elseif isbitsunion(T)
         elsz = bitsunionsize(T)
-        selptr = convert(Ptr{UInt8}, ptr) + n * elsz
+        selptr = ccall(:jl_array_typetagdata, Ptr{UInt8}, (Any,), arr)
     else
         elsz = Core.sizeof(Ptr{Cvoid})
     end
@@ -1528,7 +1555,7 @@ function vcat(arrays::Vector{T}...) where T
                   ptr, a, nba)
             # copy selector bytes
             ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, UInt),
-                  selptr, convert(Ptr{UInt8}, pointer(a)) + nba, na)
+                  selptr, ccall(:jl_array_typetagdata, Ptr{UInt8}, (Any,), a), na)
             selptr += na
         else
             ccall(:jl_array_ptr_copy, Cvoid, (Any, Ptr{Cvoid}, Any, Ptr{Cvoid}, Int),
@@ -1668,7 +1695,9 @@ julia> findnext(isodd, A, CartesianIndex(1, 1))
 CartesianIndex(1, 1)
 ```
 """
-function findnext(testf::Function, A, start)
+@inline findnext(testf::Function, A, start) = findnext_internal(testf, A, start)
+
+function findnext_internal(testf::Function, A, start)
     l = last(keys(A))
     i = start
     while i <= l
@@ -1856,7 +1885,9 @@ julia> findprev(isodd, A, CartesianIndex(1, 2))
 CartesianIndex(2, 1)
 ```
 """
-function findprev(testf::Function, A, start)
+@inline findprev(testf::Function, A, start) = findprev_internal(testf, A, start)
+
+function findprev_internal(testf::Function, A, start)
     i = start
     while i >= first(keys(A))
         testf(A[i]) && return i
@@ -2366,9 +2397,10 @@ _shrink_filter!(keep) = _unique_filter!(∈, pop!, keep)
 
 function _grow!(pred!, v::AbstractVector, itrs)
     filter!(pred!, v) # uniquify v
-    foldl(v, itrs) do v, itr
+    for itr in itrs
         mapfilter(pred!, push!, itr, v)
     end
+    return v
 end
 
 union!(v::AbstractVector{T}, itrs...) where {T} =

@@ -1410,7 +1410,7 @@ struct Foo2509; foo::Int; end
 # issue #2517
 struct Foo2517; end
 @test repr(Foo2517()) == "$(curmod_prefix)Foo2517()"
-@test repr(Vector{Foo2517}(undef, 1)) == "$(curmod_prefix)Foo2517[$(curmod_prefix)Foo2517()]"
+@test repr(Vector{Foo2517}(undef, 1)) == "$(curmod_prefix)Foo2517[Foo2517()]"
 @test Foo2517() === Foo2517()
 
 # issue #1474
@@ -2436,18 +2436,6 @@ let x = [1,2,3]
     @test (ccall(:jl_new_bits, Any, (Any,Ptr{Cvoid},), Tuple{Int16,Tuple{Cvoid},Int8,Tuple{},Int,Cvoid,Int}, x)::Tuple)[[2,4,5,6,7]] === ((nothing,),(),2,nothing,3)
 end
 
-# sig 2 is SIGINT per the POSIX.1-1990 standard
-if !Sys.iswindows()
-    ccall(:jl_exit_on_sigint, Cvoid, (Cint,), 0)
-    @test_throws InterruptException begin
-        ccall(:kill, Cvoid, (Cint, Cint,), getpid(), 2)
-        for i in 1:10
-            Libc.systemsleep(0.1)
-            ccall(:jl_gc_safepoint, Cvoid, ()) # wait for SIGINT to arrive
-        end
-    end
-    ccall(:jl_exit_on_sigint, Cvoid, (Cint,), 1)
-end
 let
     # Exception frame automatically restores sigatomic counter.
     Base.sigatomic_begin()
@@ -3764,7 +3752,7 @@ let
 end
 
 # issue #14323
-@test eval(Expr(:body, :(1))) === 1
+@test eval(Expr(:block, :(1))) === 1
 
 # issue #14339
 f14339(x::T, y::T) where {T<:Union{}} = 0
@@ -5981,6 +5969,354 @@ for U in unboxedunions
     end
 end
 
+@testset "jl_array_grow_at_end" begin
+
+# start w/ array, set & check elements, grow it, check that elements stayed correct, set & check elements
+A = Vector{Union{Missing, UInt8}}(undef, 2)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+
+# grow_at_end 2
+resize!(A, 5)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === missing
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x03
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x05
+
+# grow_at_end 1
+Base._growat!(A, 4, 1)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x03
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x05
+
+Base.arrayset(true, A, missing, 1)
+Base.arrayset(true, A, 0x02, 2)
+Base.arrayset(true, A, missing, 3)
+Base.arrayset(true, A, 0x04, 4)
+Base.arrayset(true, A, missing, 5)
+Base.arrayset(true, A, 0x06, 6)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x02
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x04
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x06
+
+# grow_at_end 5
+Base._growat!(A, 4, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x02
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x04
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x06
+
+# grow_at_end 6
+resize!(A, 8)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x02
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x04
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x06
+@test Base.arrayref(true, A, 8) === missing
+
+# grow_at_end 4
+resize!(A, 1048576)
+resize!(A, 1048577)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x02
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x04
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x06
+@test Base.arrayref(true, A, 8) === missing
+foreach(9:1048577) do i
+    @test Base.arrayref(true, A, i) === missing
+end
+foreach(9:1048577) do i
+    Base.arrayset(true, A, i % UInt8, i)
+    @test Base.arrayref(true, A, i) === i % UInt8
+end
+
+# grow_at_end 3
+A = Vector{Union{Missing, UInt8}}(undef, 1048577)
+foreach(1:1048577) do i
+    @test Base.arrayref(true, A, i) === missing
+    Base.arrayset(true, A, i % UInt8, i)
+    @test Base.arrayref(true, A, i) === i % UInt8
+end
+Base._growat!(A, 1048576, 1)
+@test length(A) == 1048578
+foreach(1:1048575) do i
+    @test Base.arrayref(true, A, i) === i % UInt8
+    @test A[i] === i % UInt8
+end
+@test Base.arrayref(true, A, 1048576) === missing
+@test Base.arrayref(true, A, 1048577) === 1048576 % UInt8
+@test Base.arrayref(true, A, 1048578) === 1048577 % UInt8
+
+end # @testset
+
+@testset "jl_array_grow_at_beg" begin
+
+# grow_at_beg 4
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._growat!(A, 1, 1)
+
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x01
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x03
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x05
+
+# grow_at_beg 2
+Base._growat!(A, 1, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x01
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x03
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x05
+
+# grow_at_beg 1
+Base._growat!(A, 2, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x01
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x03
+@test Base.arrayref(true, A, 7) === missing
+@test Base.arrayref(true, A, 8) === 0x05
+
+# grow_at_beg 9
+Base._growat!(A, 1, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x01
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x03
+@test Base.arrayref(true, A, 8) === missing
+@test Base.arrayref(true, A, 9) === 0x05
+
+# grow_at_beg 8
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._growat!(A, 2, 1)
+Base._growat!(A, 2, 1)
+
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x03
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x05
+
+# grow_at_beg 5
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._growat!(A, 4, 1)
+Base._growat!(A, 4, 1)
+
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x03
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === missing
+@test Base.arrayref(true, A, 7) === 0x05
+
+# grow_at_beg 6
+Base._growat!(A, 2, 3)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x03
+@test Base.arrayref(true, A, 7) === missing
+@test Base.arrayref(true, A, 8) === missing
+@test Base.arrayref(true, A, 9) === missing
+@test Base.arrayref(true, A, 10) === 0x05
+
+# grow_at_beg 3
+A = Vector{Union{Missing, UInt8}}(undef, 1048577)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._growat!(A, 2, 1)
+
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x03
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x05
+
+foreach(7:length(A)) do i
+    @test Base.arrayref(true, A, i) === missing
+    Base.arrayset(true, A, i % UInt8, i)
+    @test Base.arrayref(true, A, i) === i % UInt8
+end
+
+end # @testset
+
+@testset "jl_array_del_at_beg" begin
+
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._deleteat!(A, 2, 1)
+
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === 0x03
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x05
+
+Base._deleteat!(A, 1, 1)
+@test Base.arrayref(true, A, 1) === 0x03
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x05
+
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._growat!(A, 1, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x01
+@test Base.arrayref(true, A, 3) === missing
+@test Base.arrayref(true, A, 4) === 0x03
+@test Base.arrayref(true, A, 5) === missing
+@test Base.arrayref(true, A, 6) === 0x05
+Base._deleteat!(A, 2, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x03
+@test Base.arrayref(true, A, 4) === missing
+@test Base.arrayref(true, A, 5) === 0x05
+Base._deleteat!(A, 1, 2)
+@test Base.arrayref(true, A, 1) === 0x03
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x05
+Base._deleteat!(A, 1, 1)
+@test Base.arrayref(true, A, 1) === missing
+@test Base.arrayref(true, A, 2) === 0x05
+
+end # @testset
+
+@testset "jl_array_del_at_end" begin
+
+A = Vector{Union{Missing, UInt8}}(undef, 5)
+Base.arrayset(true, A, 0x01, 1)
+Base.arrayset(true, A, missing, 2)
+Base.arrayset(true, A, 0x03, 3)
+Base.arrayset(true, A, missing, 4)
+Base.arrayset(true, A, 0x05, 5)
+Base._deleteat!(A, 5, 1)
+
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === 0x03
+@test Base.arrayref(true, A, 4) === missing
+
+Base._deleteat!(A, 3, 1)
+@test Base.arrayref(true, A, 1) === 0x01
+@test Base.arrayref(true, A, 2) === missing
+@test Base.arrayref(true, A, 3) === missing
+
+end # @testset
+
+# issue #27767
+let A=Vector{Union{Int, Missing}}(undef, 1)
+    resize!(A, 2)
+    @test length(A) == 2
+    @test A[2] === missing
+end
+
+# issue #27809
+let A=Vector{Union{Int, Missing}}(undef, 0)
+    while length(A) < 2^17
+        push!(A, 0.0)
+    end
+    push!(A, 0.0)
+    @test !any(ismissing, A)
+end
+
+# jl_array_shrink
+let A=Vector{Union{UInt8, Missing}}(undef, 1048577)
+    Base.arrayset(true, A, 0x01, 1)
+    Base.arrayset(true, A, missing, 2)
+    Base.arrayset(true, A, 0x03, 3)
+    Base.arrayset(true, A, missing, 4)
+    Base.arrayset(true, A, 0x05, 5)
+    deleteat!(A, 6:1048577)
+    @test Base.arrayref(true, A, 1) === 0x01
+    @test Base.arrayref(true, A, 2) === missing
+    @test Base.arrayref(true, A, 3) === 0x03
+    @test Base.arrayref(true, A, 4) === missing
+    @test Base.arrayref(true, A, 5) === 0x05
+    sizehint!(A, 5)
+    @test Base.arrayref(true, A, 1) === 0x01
+    @test Base.arrayref(true, A, 2) === missing
+    @test Base.arrayref(true, A, 3) === 0x03
+    @test Base.arrayref(true, A, 4) === missing
+    @test Base.arrayref(true, A, 5) === 0x05
+end
+
+# copyto!/vcat w/ internal padding
+let A=[0, missing], B=[missing, 0], C=Vector{Union{Int, Missing}}(undef, 6)
+    push!(A, missing)
+    push!(B, missing)
+    @test isequal(vcat(A, B), [0, missing, missing, missing, 0, missing])
+    copyto!(C, 1, A)
+    copyto!(C, 4, B)
+    @test isequal(C, [0, missing, missing, missing, 0, missing])
+end
+
 end # module UnionOptimizations
 
 # issue #6614, argument destructuring
@@ -6057,6 +6393,9 @@ g25907b(x) = x[1]::Complex
 
 #issue #26363
 @test eltype(Ref(Float64(1))) === Float64
+@test ndims(Ref(1)) === 0
+@test collect(Ref(1)) == [v for v in Ref(1)] == fill(1)
+@test axes(Ref(1)) === size(Ref(1)) === ()
 
 # issue #23206
 g1_23206(::Tuple{Type{Int}, T}) where T = 0
@@ -6235,3 +6574,87 @@ function f27597(y)
 end
 @test f27597([1]) == [1]
 @test f27597([]) == 1:0
+
+# issue #22291
+wrap22291(ind) = (ind...,)
+@test @inferred(wrap22291(1)) == (1,)
+@test @inferred(wrap22291((1, 2))) == (1, 2)
+
+# Issue 27770
+mutable struct Handle27770
+    ptr::Ptr{Cvoid}
+end
+Handle27770() = Handle27770(Ptr{Cvoid}(UInt(0xfeedface)))
+
+struct Nullable27770
+    hasvalue::Bool
+    value::Handle27770
+    Nullable27770() = new(false)
+    Nullable27770(v::Handle27770) = new(true, Handle27770)
+end
+get27770(n::Nullable27770, v::Handle27770) = n.hasvalue ? n.value : v
+
+foo27770() = get27770(Nullable27770(), Handle27770())
+@test foo27770().ptr == Ptr{Cvoid}(UInt(0xfeedface))
+
+bar27770() = Nullable27770().value
+@test_throws UndefRefError bar27770()
+
+# Issue 27910
+f27910() = ((),)[2]
+@test_throws BoundsError f27910()
+
+# Issue 9765
+f9765(::Bool) = 1
+g9765() = f9765(isa(1, 1))
+@test_throws TypeError g9765()
+
+# Issue 28102
+struct HasPlain28102
+    plain::Int
+    HasPlain28102() = new()
+end
+@noinline function bam28102()
+    x = HasPlain28102()
+    if isdefined(x,:plain)
+        x.plain
+    end
+end
+@test isa(bam28102(), Int)
+
+# Check that the tfunc for fieldtype is correct
+struct FooFieldType; x::Int; end
+f_fieldtype(b) = fieldtype(b ? Int : FooFieldType, 1)
+
+@test @inferred(f_fieldtype(false)) == Int
+@test_throws BoundsError f_fieldtype(true)
+
+# Issue #28224
+@noinline make_error28224(n) = n == 5 ? error() : true
+function foo28224()
+    z = 0
+    try
+        while make_error28224(z)
+            z+=1
+        end
+    catch end
+    return z
+end
+@test foo28224() == 5
+
+# Issue #28208
+@noinline function foo28208(a::Bool, b::Bool)
+    x = (1, 2)
+    if a
+        if b
+            y = nothing
+        else
+            y = missing
+        end
+        x = y
+    end
+    x
+end
+@test isa(foo28208(false, true), Tuple)
+@test foo28208(true, false) === missing
+@test foo28208(true, true) === nothing

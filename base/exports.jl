@@ -309,8 +309,8 @@ export
     rad2deg,
     rationalize,
     real,
-    realmax,
-    realmin,
+    floatmax,
+    floatmin,
     reim,
     reinterpret,
     rem,
@@ -423,7 +423,7 @@ export
     sortperm,
     sortperm!,
     sortrows,
-    squeeze,
+    dropdims,
     step,
     stride,
     strides,
@@ -625,15 +625,6 @@ export
     setrounding,
     get_zero_subnormals,
     set_zero_subnormals,
-
-# statistics
-    mean!,
-    mean,
-    median!,
-    median,
-    middle,
-    quantile!,
-    quantile,
 
 # iteration
     done,
@@ -979,6 +970,7 @@ export
     @inline,
     @noinline,
     @nospecialize,
+    @specialize,
     @polly,
 
     @assert,

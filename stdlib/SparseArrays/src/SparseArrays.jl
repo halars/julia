@@ -7,7 +7,8 @@ Support for sparse arrays. Provides `AbstractSparseArray` and subtypes.
 """
 module SparseArrays
 
-using Base: ReshapedArray, promote_op, setindex_shape_check, to_shape, tail
+using Base: ReshapedArray, promote_op, setindex_shape_check, to_shape, tail,
+    has_offset_axes
 using Base.Sort: Forward
 using LinearAlgebra
 
@@ -21,7 +22,7 @@ import Base: @get!, acos, acosd, acot, acotd, acsch, asech, asin, asind, asinh,
     cotd, coth, count, csc, cscd, csch, done,
     exp10, exp2, findprev, findnext, floor, hash, argmin, inv,
     log10, log2, next, sec, secd, sech, show,
-    sin, sinc, sind, sinh, sinpi, squeeze, start, sum, summary, tan,
+    sin, sinc, sind, sinh, sinpi, dropdims, start, sum, summary, tan,
     tand, tanh, trunc, abs, abs2,
     broadcast, ceil, complex, conj, convert, copy, copyto!, adjoint,
     exp, expm1, findall, findmax, findmin, float, getindex,

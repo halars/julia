@@ -1,13 +1,14 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 using Dates, Random
-isdefined(Main, :TestHelpers) || @eval Main include(joinpath(dirname(@__FILE__), "TestHelpers.jl"))
+isdefined(Main, :PhysQuantities) || @eval Main include("testhelpers/PhysQuantities.jl")
+using .Main.PhysQuantities
 
 # Compare precision in a manner sensitive to subnormals, which lose
 # precision compared to widening.
 function cmp_sn(w, hi, lo, slopbits=0)
     if !isfinite(hi)
-        if abs(w) > realmax(typeof(hi))
+        if abs(w) > floatmax(typeof(hi))
             return isinf(hi) && sign(w) == sign(hi)
         end
         if isnan(w) && isnan(hi)
@@ -121,7 +122,7 @@ astuple(x) = (x.hi, x.lo)
 
 function cmp_sn2(w, hi, lo, slopbits=0)
     if !isfinite(hi)
-        if abs(w) > realmax(typeof(hi))
+        if abs(w) > floatmax(typeof(hi))
             return isinf(hi) && sign(w) == sign(hi)
         end
         if isnan(w) && isnan(hi)
@@ -187,10 +188,10 @@ end
     @test isnan(Float64(x0/0))
     @test isnan(Float64(x0/0.0))
 
-    x = Base.TwicePrecision(Main.TestHelpers.PhysQuantity{1}(4.0))
-    @test x.hi*2 === Main.TestHelpers.PhysQuantity{1}(8.0)
+    x = Base.TwicePrecision(PhysQuantity{1}(4.0))
+    @test x.hi*2 === PhysQuantity{1}(8.0)
     @test_throws ErrorException("Int is incommensurate with PhysQuantity") x*2   # not a MethodError for convert
-    @test x.hi/2 === Main.TestHelpers.PhysQuantity{1}(2.0)
+    @test x.hi/2 === PhysQuantity{1}(2.0)
     @test_throws ErrorException("Int is incommensurate with PhysQuantity") x/2
 end
 @testset "ranges" begin
@@ -670,11 +671,11 @@ end
 
 @testset "range with very large endpoints for type $T" for T = (Float32, Float64)
     largeint = Int(min(maxintfloat(T), typemax(Int)))
-    a = realmax()
+    a = floatmax()
     for i = 1:5
         @test [range(a, stop=a, length=1);] == [a]
         @test [range(-a, stop=-a, length=1);] == [-a]
-        b = realmax()
+        b = floatmax()
         for j = 1:5
             @test [range(-a, stop=b, length=0);] == []
             @test [range(-a, stop=b, length=2);] == [-a,b]
@@ -828,14 +829,6 @@ end
     @test length(map(identity, 0x0001:0x0005)) == 5
     @test length(map(identity, UInt64(1):UInt64(5))) == 5
     @test length(map(identity, UInt128(1):UInt128(5))) == 5
-end
-@testset "mean/median" begin
-    for f in (mean, median)
-        for n = 2:5
-            @test f(2:n) == f([2:n;])
-            @test f(2:0.1:n) ≈ f([2:0.1:n;])
-        end
-    end
 end
 @testset "issue #8531" begin
     smallint = (Int === Int64 ?
@@ -1151,6 +1144,15 @@ end
         @test findall(in(2:(length(r) - 1)), r) === 2:(length(r) - 1)
         @test findall(in(r), 2:(length(r) - 1)) === 1:(length(r) - 2)
     end
+    @test convert(Base.OneTo, 1:2) === Base.OneTo{Int}(2)
+    @test_throws ArgumentError("first element must be 1, got 2") convert(Base.OneTo, 2:3)
+    @test_throws ArgumentError("step must be 1, got 2") convert(Base.OneTo, 1:2:5)
+    @test Base.OneTo(1:2) === Base.OneTo{Int}(2)
+    @test Base.OneTo(1:1:2) === Base.OneTo{Int}(2)
+    @test Base.OneTo{Int32}(1:2) === Base.OneTo{Int32}(2)
+    @test Base.OneTo(Int32(1):Int32(2)) === Base.OneTo{Int32}(2)
+    @test Base.OneTo{Int16}(3.0) === Base.OneTo{Int16}(3)
+    @test_throws InexactError(:Int16, Int16, 3.2) Base.OneTo{Int16}(3.2)
 end
 
 @testset "range of other types" begin
@@ -1223,8 +1225,9 @@ Base.rem(x, y::NotReal) = rem(x, y.val)
 Base.isless(x, y::NotReal) = isless(x, y.val)
 @test (:)(1, NotReal(1), 5) isa StepRange{Int,NotReal}
 
-isdefined(Main, :TestHelpers) || @eval Main include("TestHelpers.jl")
-using .Main.TestHelpers: Furlong
+isdefined(Main, :Furlongs) || @eval Main include("testhelpers/Furlongs.jl")
+using .Main.Furlongs
+
 @testset "dimensional correctness" begin
     @test length(Vector(Furlong(2):Furlong(10))) == 9
     @test length(range(Furlong(2), length=9)) == 9
@@ -1284,6 +1287,12 @@ end
     x = range(3, stop=3, length=5)
     @test step(x) == 0.0
     @test x isa StepRangeLen{Float64,Base.TwicePrecision{Float64},Base.TwicePrecision{Float64}}
+end
+
+@testset "Issue #26608" begin
+    @test_throws BoundsError (Int8(-100):Int8(100))[400]
+    @test_throws BoundsError (-100:100)[typemax(UInt)]
+    @test_throws BoundsError (false:true)[3]
 end
 
 module NonStandardIntegerRangeTest

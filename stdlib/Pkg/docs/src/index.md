@@ -84,8 +84,9 @@ identify the package in projects that depend on it.
 
 **Application:** a project which provides standalone functionality not intended
 to be reused by other Julia projects. For example a web application or a
-commmand-line utility. An application may have a UUID but does not need one. An
-application may also provide global configuration options for packages it
+commmand-line utility, or simulation/analytics code accompanying a scientific paper.
+An application may have a UUID but does not need one.
+An application may also provide global configuration options for packages it
 depends on. Packages, on the other hand, may not provide global configuration
 since that could conflict with the configuration of the main application.
 
@@ -155,7 +156,7 @@ including:
 - `dev`: default directory for package development
 - `logs`: log files (e.g. `manifest_usage.toml`, `repl_history.jl`)
 - `packages`: installed package versions
-- `registries`: clones of registries (e.g. `Uncurated`)
+- `registries`: clones of registries (e.g. `General`)
 
 **Load path:** a stack of environments where package identities, their
 dependencies, and entry-points are searched for. The load path is controlled in
@@ -192,6 +193,9 @@ Since we haven't created our own project yet, we are in the default project, loc
 
 To return to the `julia>` prompt, either press backspace when the input line is empty or press Ctrl+C.
 Help is available by calling `pkg> help`.
+If you are in an environment that does not have access to a REPL you can still use the REPL mode commands using
+the string macro `pkg` available after `using Pkg`. The command `pkg"cmd"` would be equivalent to executing `cmd`
+in the REPL mode.
 
 The documentation here describes using Pkg from the REPL mode. Documentation of using
 the Pkg API (by calling `Pkg.` functions) is in progress of being written.
@@ -208,9 +212,9 @@ In the Pkg REPL packages can be added with the `add` command followed by the nam
 ```
 (v0.7) pkg> add Example
    Cloning default registries into /Users/kristoffer/.julia/registries
-   Cloning registry Uncurated from "https://github.com/JuliaRegistries/Uncurated.git"
-  Updating registry at `~/.julia/registries/Uncurated`
-  Updating git-repo `https://github.com/JuliaRegistries/Uncurated.git`
+   Cloning registry General from "https://github.com/JuliaRegistries/General.git"
+  Updating registry at `~/.julia/registries/General`
+  Updating git-repo `https://github.com/JuliaRegistries/General.git`
  Resolving package versions...
   Updating `~/.julia/environments/v0.7/Project.toml`
   [7876af07] + Example v0.5.1
@@ -220,7 +224,7 @@ In the Pkg REPL packages can be added with the `add` command followed by the nam
 ```
 
 Here we added the package Example to the current project. In this example, we are using a fresh Julia installation,
-and this is our first time adding a package using Pkg. By default, Pkg clones Julia's Uncurated registry,
+and this is our first time adding a package using Pkg. By default, Pkg clones Julia's General registry,
 and uses this registry to look up packages requested for inclusion in the current environment.
 The status update shows a short form of the package UUID to the left, then the package name, and the version.
 Since standard libraries (e.g. `Test`) are shipped with Julia, they do not have a version. The project status contains the packages
@@ -271,9 +275,9 @@ we can explicitly track a branch (or commit) by appending `#branch` (or `#commit
   Updating git-repo `https://github.com/JuliaLang/Example.jl.git`
  Resolving package versions...
   Updating `~/.julia/environments/v0.7/Project.toml`
-  [7876af07] ~ Example v0.5.1 ⇒ v0.5.1+ #master [https://github.com/JuliaLang/Example.jl.git]
+  [7876af07] ~ Example v0.5.1 ⇒ v0.5.1+ #master (https://github.com/JuliaLang/Example.jl.git)
   Updating `~/.julia/environments/v0.7/Manifest.toml`
-  [7876af07] ~ Example v0.5.1 ⇒ v0.5.1+ #master [https://github.com/JuliaLang/Example.jl.git]
+  [7876af07] ~ Example v0.5.1 ⇒ v0.5.1+ #master (https://github.com/JuliaLang/Example.jl.git)
 ```
 
 The status output now shows that we are tracking the `master` branch of `Example`.
@@ -285,9 +289,9 @@ To go back to tracking the registry version of `Example`, the command `free` is 
 (v0.7) pkg> free Example
  Resolving package versions...
   Updating `~/.julia/environments/v0.7/Project.toml`
-  [7876af07] ~ Example v0.5.1+ #master [https://github.com/JuliaLang/Example.jl.git] ⇒ v0.5.1
+  [7876af07] ~ Example v0.5.1+ #master (https://github.com/JuliaLang/Example.jl.git) ⇒ v0.5.1
   Updating `~/.julia/environments/v0.7/Manifest.toml`
-  [7876af07] ~ Example v0.5.1+ #master [https://github.com/JuliaLang/Example.jl.git] ⇒ v0.5.1
+  [7876af07] ~ Example v0.5.1+ #master )https://github.com/JuliaLang/Example.jl.git) ⇒ v0.5.1
 ```
 
 
@@ -301,9 +305,9 @@ If a package is not in a registry, it can still be added by instead of the packa
  Resolving package versions...
 Downloaded MacroTools ─ v0.4.1
   Updating `~/.julia/environments/v0.7/Project.toml`
-  [e6797606] + ImportMacros v0.0.0 # [https://github.com/fredrikekre/ImportMacros.jl]
+  [e6797606] + ImportMacros v0.0.0 # (https://github.com/fredrikekre/ImportMacros.jl)
   Updating `~/.julia/environments/v0.7/Manifest.toml`
-  [e6797606] + ImportMacros v0.0.0 # [https://github.com/fredrikekre/ImportMacros.jl]
+  [e6797606] + ImportMacros v0.0.0 # (https://github.com/fredrikekre/ImportMacros.jl)
   [1914dd2f] + MacroTools v0.4.1
 ```
 
@@ -355,6 +359,7 @@ Note the info message saying that it is using the existing path. This means that
 an already developed package.
 
 If `dev` is used on a local path, that path to that package is recorded and used when loading that package.
+The path will be recorded relative to the project file, unless it is given as an absolute path.
 
 To stop tracking a path and use the registered version again, use `free`
 
@@ -455,7 +460,7 @@ shell> cat ~/.julia/packages/MbedTLS/h1Vu/deps/build.log
 
 So far we have added packages to the default project at `~/.julia/environments/v0.7`, it is, however, easy to create other, independent, projects.
 It should be pointed out if two projects uses the same package at the same version, the content of this package is not duplicated.
-This is done using the `init` command. Below we make a new directory and create a new project in it:
+In order to create a new project, create a directory for it and then activate that directory to make it the "active project" which package operations manipulate:
 
 ```
 shell> mkdir MyProject
@@ -463,16 +468,49 @@ shell> mkdir MyProject
 shell> cd MyProject
 /Users/kristoffer/MyProject
 
-(v0.7) pkg> init
-Initialized project at /Users/kristoffer/MyProject/Project.toml
+(v0.7) pkg> activate .
 
 (MyProject) pkg> st
     Status `Project.toml`
 ```
 
-Note that the REPL prompt changed when the new project was initiated, in other words, Pkg automatically set the current environment to the
-one that just got initiated. Since this is a newly created project, the status command show it contains no packages.
-Packages added here again in a completely separate environment from the one earlier used.
+Note that the REPL prompt changed when the new project is activated. Since this is a newly created project, the status command show it contains no packages, and in fact, it has no project or manifest file until we add a package to it:
+
+```
+shell> ls -l
+total 0
+
+(MyProject) pkg> add Example
+  Updating registry at `~/.julia/registries/General`
+  Updating git-repo `https://github.com/JuliaRegistries/General.git`
+ Resolving package versions...
+  Updating `Project.toml`
+  [7876af07] + Example v0.5.1
+  Updating `Manifest.toml`
+  [7876af07] + Example v0.5.1
+  [8dfed614] + Test
+
+shell> ls -l
+total 8
+-rw-r--r-- 1 stefan staff 207 Jul  3 16:35 Manifest.toml
+-rw-r--r-- 1 stefan staff  56 Jul  3 16:35 Project.toml
+
+shell> cat Project.toml
+[deps]
+Example = "7876af07-990d-54b4-ab0e-23690620f79a"
+
+shell> cat Manifest.toml
+[[Example]]
+deps = ["Test"]
+git-tree-sha1 = "8eb7b4d4ca487caade9ba3e85932e28ce6d6e1f8"
+uuid = "7876af07-990d-54b4-ab0e-23690620f79a"
+version = "0.5.1"
+
+[[Test]]
+uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+```
+
+This new environment is completely separate from the one we used earlier.
 
 ## Garbage collecting old, unused packages
 
@@ -548,7 +586,7 @@ end # module
 We can now activate the project and load the package:
 
 ```jl
-pkg> activate
+pkg> activate .
 
 julia> import HelloWorld
 
@@ -655,13 +693,18 @@ Testing...
 
 #### Test-specific dependencies
 
-Sometimes one might to want to use some packages only at testing time but not enforce a dependency on them when the package is used.
-This is possible by adding dependencies to a "test target" to the Project file. Here we add the `Test` standard library as a
-test-only dependency by adding the following to the Project file:
+Sometimes one might want to use some packages only at testing time but not
+enforce a dependency on them when the package is used. This is possible by
+adding `[extra]` dependencies and adding a a "test target" to the Project file.
+Here we add the `Test` standard library as a test-only dependency by adding the
+following to the Project file:
 
 ```
-[target.test.deps]
+[extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
 ```
 
 We can now use `Test` in the test script and we can see that it gets installed on testing:
@@ -699,7 +742,7 @@ After a compatibility entry is put into the project file, `up` can be used to ap
 The format of the version specifier is described in detail below.
 
 !!! info
-  There is currently no way to give compatibility from the Pkg REPL mode so for now, one has to manually edit the project file.
+    There is currently no way to give compatibility from the Pkg REPL mode so for now, one has to manually edit the project file.
 
 #### Version specifier format
 
@@ -707,6 +750,7 @@ Similar to other package managers, the Julia package manager respects [semantic 
 As an example, a version specifier is given as e.g. `1.2.3` is therefore assumed to be compatible with the versions `[1.2.3 - 2.0.0)` where `)` is a non-inclusive upper bound.
 More specifically, a version specifier is either given as a **caret specifier**, e.g. `^1.2.3`  or a **tilde specifier** `~1.2.3`.
 Caret specifiers are the default and hence `1.2.3 == ^1.2.3`. The difference between a caret and tilde is described in the next section.
+The intersection of multiple version specifiers can be formed by comma separating indiviual version specifiers.
 
 ##### Caret specifiers
 
@@ -739,6 +783,17 @@ This gives the following example.
 ~1 = [1.0.0, 2.0.0)
 ```
 
+#### Inequality specifiers
+
+Inequalities can also be used to specify version ranges:
+
+```
+>= 1.2.3 = [1.2.3,  ∞)
+≥ 1.2.3 = [1.2.3,  ∞)
+= 1.2.3 = [1.2.3, 1.2.3]
+< 1.2.3 = [0.0.0, 1.2.2]
+```
+
 
 ## Precompiling a project
 
@@ -748,7 +803,7 @@ The REPL command `precompile` can be used to precompile all the dependencies in 
 (HelloWorld) pkg> update; precompile
 ```
 
-do update the dependencies and then precompile them.
+to update the dependencies and then precompile them.
 
 ## Preview mode
 
@@ -770,13 +825,40 @@ However, nothing would be installed and your `Project.toml` and `Manifest.toml` 
 
 ## Using someone else's project
 
-Simple clone their project using e.g. `git clone`, `cd` to the project directory and call
+Simply clone their project using e.g. `git clone`, `cd` to the project directory and call
 
 ```
-(v0.7) pkg> activate
+(v0.7) pkg> activate .
 
 (SomeProject) pkg> instantiate
 ```
 
 If the project contains a manifest, this will install the packages in the same state that is given by that manifest.
 Otherwise, it will resolve the latest versions of the dependencies compatible with the project.
+
+## References
+
+This section describes the "API mode" of interacting with Pkg.jl which is recommended for non-interactive usage,
+in i.e. scripts. In the REPL mode packages (with associated version, UUID, URL etc) are parsed from strings,
+for example, `"Package#master"`,`"Package@v0.1"`, `"www.mypkg.com/MyPkg#my/feature"`.
+It is possible to use strings as arguments for simple commands in the API mode (like `Pkg.add(["PackageA", "PackageB"])`,
+more complicated commands, that e.g. specify URLs or version range, uses a more structured format over strings.
+This is done by creating an instance of a [`PackageSpec`](@ref) which are passed in to functions.
+
+```@docs
+PackageSpec
+PackageMode
+UpgradeLevel
+Pkg.add
+Pkg.develop
+Pkg.activate
+Pkg.rm
+Pkg.update
+Pkg.test
+Pkg.build
+Pkg.pin
+Pkg.free
+Pkg.instantiate
+Pkg.resolve
+Pkg.setprotocol!
+```

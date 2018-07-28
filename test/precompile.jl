@@ -133,6 +133,14 @@ try
               Base.convert(::Type{Ref}, ::Value18343{T}) where {T} = 3
 
 
+              # issue #28297
+              mutable struct Result
+                  result::Union{Int,Missing}
+              end
+
+              const x28297 = Result(missing)
+
+
               let some_method = which(Base.include, (String,))
                     # global const some_method // FIXME: support for serializing a direct reference to an external Method not implemented
                   global const some_linfo =
@@ -145,6 +153,8 @@ try
 
               const abigfloat_f() = big"12.34"
               const abigfloat_x = big"43.21"
+              const abigint_f() = big"123"
+              const abigint_x = big"124"
           end
           """)
     @test_throws ErrorException Core.kwfunc(Base.nothing) # make sure `nothing` didn't have a kwfunc (which would invalidate the attempted test)
@@ -171,6 +181,8 @@ try
         # Issue #15722
         @test Foo.abigfloat_f()::BigFloat == big"12.34"
         @test (Foo.abigfloat_x::BigFloat + 21) == big"64.21"
+        @test Foo.abigint_f()::BigInt == big"123"
+        @test Foo.abigint_x::BigInt + 1 == big"125"
     end
 
     cachedir = joinpath(dir, "compiled", "v$(VERSION.major).$(VERSION.minor)")
@@ -226,7 +238,8 @@ try
                 [:Base64, :CRC32c, :Dates, :DelimitedFiles, :Distributed, :FileWatching, :Markdown,
                  :Future, :Libdl, :LinearAlgebra, :Logging, :Mmap, :Printf,
                  :Profile, :Random, :Serialization, :SharedArrays, :SparseArrays, :SuiteSparse, :Test,
-                 :Unicode, :REPL, :InteractiveUtils, :OldPkg, :Pkg, :LibGit2, :SHA, :UUIDs, :Sockets]))
+                 :Unicode, :REPL, :InteractiveUtils, :OldPkg, :Pkg, :LibGit2, :SHA, :UUIDs, :Sockets,
+                 :Statistics, ]))
         @test discard_module.(deps) == deps1
 
         @test current_task()(0x01, 0x4000, 0x30031234) == 2

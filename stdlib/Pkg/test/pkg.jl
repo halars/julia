@@ -58,6 +58,36 @@ import Pkg.Types: semver_spec, VersionSpec
     @test  v"0.0.0"   in semver_spec("0.0")
     @test  v"0.0.99"  in semver_spec("0.0")
     @test !(v"0.1.0"  in semver_spec("0.0"))
+
+    @test semver_spec("<1.2.3") == VersionSpec("0.0.0 - 1.2.2")
+    @test semver_spec("<1.2") == VersionSpec("0.0.0 - 1.1")
+    @test semver_spec("<1") == VersionSpec("0.0.0 - 0")
+    @test semver_spec("<2") == VersionSpec("0.0.0 - 1")
+    @test semver_spec("<0.2.3") == VersionSpec("0.0.0 - 0.2.2")
+    @test semver_spec("<2.0.3") == VersionSpec("0.0.0 - 2.0.2")
+    @test   v"0.2.3" in semver_spec("<0.2.4")
+    @test !(v"0.2.4" in semver_spec("<0.2.4"))
+
+    @test semver_spec("=1.2.3") == VersionSpec("1.2.3")
+    @test semver_spec("=1.2") == VersionSpec("1.2.0")
+    @test semver_spec("  =1") == VersionSpec("1.0.0")
+    @test   v"1.2.3" in semver_spec("=1.2.3")
+    @test !(v"1.2.4" in semver_spec("=1.2.3"))
+    @test !(v"1.2.2" in semver_spec("=1.2.3"))
+
+    @test semver_spec("≥1.3.0") == semver_spec(">=1.3.0")
+
+    @test semver_spec(">=   1.2.3") == VersionSpec("1.2.3-*")
+    @test semver_spec(">=1.2  ") == VersionSpec("1.2.0-*")
+    @test semver_spec("  >=  1") == VersionSpec("1.0.0-*")
+    @test   v"1.0.0" in semver_spec(">=1")
+    @test   v"0.0.1" in semver_spec(">=0")
+    @test   v"1.2.3" in semver_spec(">=1.2.3")
+    @test !(v"1.2.2" in semver_spec(">=1.2.3"))
+
+    @test_throws ErrorException semver_spec("^^0.2.3")
+    @test_throws ErrorException semver_spec("^^0.2.3.4")
+    @test_throws ErrorException semver_spec("0.0.0")
 end
 
 # TODO: Should rewrite these tests not to rely on internals like field names
@@ -87,7 +117,7 @@ end
 
 temp_pkg_dir() do project_path
     @testset "simple add and remove with preview" begin
-        Pkg.init(project_path)
+        Pkg.activate(project_path)
         Pkg.add(TEST_PKG.name; preview = true)
         @test !isinstalled(TEST_PKG)
         Pkg.add(TEST_PKG.name)
@@ -114,9 +144,9 @@ temp_pkg_dir() do project_path
         # VersionRange
         Pkg.add(PackageSpec(TEST_PKG.name, VersionSpec(VersionRange("0.3.0-0.3.2"))))
         @test Pkg.installed()[TEST_PKG.name] == v"0.3.2"
-        Pkg.up(; level = UpgradeLevel(:patch))
+        Pkg.update(; level = UPLEVEL_PATCH)
         @test Pkg.installed()[TEST_PKG.name] == v"0.3.3"
-        Pkg.up(; level = UpgradeLevel(:minor))
+        Pkg.update(; level = UPLEVEL_MINOR)
         @test Pkg.installed()[TEST_PKG.name].minor != 3
         Pkg.rm(TEST_PKG.name)
     end
@@ -137,10 +167,10 @@ temp_pkg_dir() do project_path
         old_v = Pkg.installed()[TEST_PKG.name]
         Pkg.pin(PackageSpec(TEST_PKG.name, v"0.2"))
         @test Pkg.installed()[TEST_PKG.name].minor == 2
-        Pkg.up(TEST_PKG.name)
+        Pkg.update(TEST_PKG.name)
         @test Pkg.installed()[TEST_PKG.name].minor == 2
         Pkg.free(TEST_PKG.name)
-        Pkg.up()
+        Pkg.update()
         @test Pkg.installed()[TEST_PKG.name] == old_v
         Pkg.rm(TEST_PKG.name)
     end
@@ -151,7 +181,7 @@ temp_pkg_dir() do project_path
         Pkg.rm(TEST_PKG.name)
         mktempdir() do devdir
             withenv("JULIA_PKG_DEVDIR" => devdir) do
-                Pkg.REPLMode.pkgstr("develop $(TEST_PKG.name)")
+                Pkg.develop(TEST_PKG.name)
                 @test isinstalled(TEST_PKG)
                 @test Pkg.installed()[TEST_PKG.name] > old_v
                 test_pkg_main_file = joinpath(devdir, TEST_PKG.name, "src", TEST_PKG.name * ".jl")
@@ -184,20 +214,41 @@ temp_pkg_dir() do project_path
         end
     end
 
+    @testset "invalid pkg name" begin
+        @test_throws CommandError Pkg.add(",sa..,--")
+    end
+
     @testset "stdlibs as direct dependency" begin
         uuid_pkg = (name = "CRC32c", uuid = UUID("8bf52ea8-c179-5cab-976a-9e18b702a9bc"))
         Pkg.add("CRC32c")
         @test haskey(Pkg.installed(), uuid_pkg.name)
-        Pkg.up()
-        Pkg.test("CRC32c")
+        Pkg.update()
+        # Disable until fixed in Base
+        # Pkg.test("CRC32c")
         Pkg.rm("CRC32c")
     end
 
     @testset "package name in resolver errors" begin
         try
-            Pkg.add([PackageSpec(TEST_PKG.name, VersionSpec(v"55"))])
+            Pkg.add(PackageSpec(;name = TEST_PKG.name, version = v"55"))
         catch e
             @test occursin(TEST_PKG.name, sprint(showerror, e))
+        end
+    end
+
+    @testset "protocols" begin
+        mktempdir() do devdir
+            withenv("JULIA_PKG_DEVDIR" => devdir) do
+                try
+                    Pkg.setprotocol!("notarealprotocol")
+                    @test_throws CommandError Pkg.develop("Example")
+                    Pkg.setprotocol!("https")
+                    Pkg.develop("Example")
+                    @test isinstalled(TEST_PKG)
+                finally
+                    Pkg.setprotocol!()
+                end
+            end
         end
     end
 
@@ -209,7 +260,7 @@ temp_pkg_dir() do project_path
     @testset "adding nonexisting packages" begin
         nonexisting_pkg = randstring(14)
         @test_throws CommandError Pkg.add(nonexisting_pkg)
-        @test_throws CommandError Pkg.up(nonexisting_pkg)
+        @test_throws CommandError Pkg.update(nonexisting_pkg)
     end
 
     Pkg.rm(TEST_PKG.name)
@@ -232,17 +283,22 @@ temp_pkg_dir() do project_path
     @testset "add julia" begin
         @test_throws CommandError Pkg.add("julia")
     end
+end
+
+temp_pkg_dir() do project_path
+    @testset "libgit2 downloads" begin
+        Pkg.add(TEST_PKG.name; use_libgit2_for_all_downloads=true)
+        @test haskey(Pkg.installed(), TEST_PKG.name)
+        Pkg.rm(TEST_PKG.name)
+    end
 
     @testset "up in Project without manifest" begin
         mktempdir() do dir
             cp(joinpath(@__DIR__, "test_packages", "UnregisteredWithProject"), joinpath(dir, "UnregisteredWithProject"))
             cd(joinpath(dir, "UnregisteredWithProject")) do
-                try
-                    pushfirst!(LOAD_PATH, Base.current_env())
-                    Pkg.up()
+                with_current_env() do
+                    Pkg.update()
                     @test haskey(Pkg.installed(), "Example")
-                finally
-                    popfirst!(LOAD_PATH)
                 end
             end
         end
@@ -255,19 +311,22 @@ temp_pkg_dir() do project_path
         @test haskey(Pkg.installed(), TEST_PKG.name)
         Pkg.rm(TEST_PKG.name)
     end
+    @testset "tarball downloads" begin
+        Pkg.add("JSON"; use_only_tarballs_for_downloads=true)
+        @test haskey(Pkg.installed(), "JSON")
+        Pkg.rm("JSON")
+    end
 end
 
 @testset "parse package url win" begin
-    @test typeof(Pkg.REPLMode.parse_package("https://github.com/abc/ABC.jl"; context=Pkg.REPLMode.CMD_ADD)) == PackageSpec
+    @test typeof(Pkg.REPLMode.parse_package("https://github.com/abc/ABC.jl"; add_or_develop=true)) == PackageSpec
 end
 
 @testset "preview generate" begin
     mktempdir() do tmp
         cd(tmp) do
-            withenv("USER" => "Test User") do
-                Pkg.generate("Foo"; preview=true)
-                @test !isdir(joinpath(tmp, "Foo"))
-            end
+            Pkg.generate("Foo"; preview=true)
+            @test !isdir(joinpath(tmp, "Foo"))
         end
     end
 end
@@ -277,14 +336,101 @@ temp_pkg_dir() do project_path
         mktempdir() do dir
             cp(joinpath(@__DIR__, "test_packages", "UnregisteredWithProject"), joinpath(dir, "UnregisteredWithProject"))
             cd(joinpath(dir, "UnregisteredWithProject")) do
-                try
-                    pushfirst!(LOAD_PATH, Base.current_env())
+                with_current_env() do
                     Pkg.add("Test") # test https://github.com/JuliaLang/Pkg.jl/issues/324
                     Pkg.test()
-                finally
-                    popfirst!(LOAD_PATH)
                 end
             end
+        end
+    end
+end
+
+#=
+temp_pkg_dir() do project_path
+    @testset "valid project file names" begin
+        extract_uuid(toml_path) = begin
+            uuid = ""
+            for line in eachline(toml_path)
+                m = match(r"uuid = \"(.+)\"", line)
+                if m !== nothing
+                    uuid = m.captures[1]
+                    break
+                end
+            end
+            return uuid
+        end
+
+        cd(project_path) do
+            mktempdir() do tmp; cd(tmp) do
+                pkg_name = "FooBar"
+                # create a project and grab its uuid
+                withenv("USER" => "Test User") do
+                    Pkg.generate(pkg_name)
+                end
+                uuid = extract_uuid(joinpath(pkg_name, "Project.toml"))
+                # activate project env
+                Pkg.activate(abspath(pkg_name))
+                # add an example project to populate manifest file
+                Pkg.add("Example")
+                Pkg.activate()
+                # change away from default names
+                mv(joinpath(pkg_name, "Project.toml"), joinpath(pkg_name, "JuliaProject.toml"))
+                mv(joinpath(pkg_name, "Manifest.toml"), joinpath(pkg_name, "JuliaManifest.toml"))
+                # make sure things still work
+                Pkg.develop(PackageSpec(url = abspath(pkg_name)))
+                @test isinstalled((name=pkg_name, uuid=UUID(uuid)))
+                Pkg.rm(pkg_name)
+                @test !isinstalled((name=pkg_name, uuid=UUID(uuid)))
+            end end
+        end # cd project_path
+    end # @testset
+end
+=#
+
+temp_pkg_dir() do project_path
+    @testset "invalid repo url" begin
+        cd(project_path) do
+            @test_throws CommandError Pkg.add("https://github.com")
+            Pkg.generate("FooBar")
+            @test_throws CommandError Pkg.add("./Foobar")
+        end
+    end
+end
+
+
+temp_pkg_dir() do project_path
+    # pkg assumes `Example.jl` is still a git repo, it will try to fetch on `update`
+    # `fetch` should warn that it is no longer a git repo
+    with_temp_env() do
+        @testset "inconsistent repo state" begin
+            package_path = joinpath(project_path, "Example")
+            LibGit2.with(LibGit2.clone("https://github.com/JuliaLang/Example.jl", package_path)) do repo
+                Pkg.add(PackageSpec(url=package_path))
+            end
+            rm(joinpath(package_path, ".git"); force=true, recursive=true)
+            @test_throws CommandError Pkg.update()
+        end
+    end
+end
+
+temp_pkg_dir() do project_path
+    cd(project_path) do
+        project = """
+        [deps]
+        UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+        [extras]
+        Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+        Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+        [targets]
+        test = ["Markdown", "Test"]
+        """
+        write("Project.toml", project)
+        Pkg.activate(".")
+        @testset "resolve ignores extras" begin
+            Pkg.resolve()
+            @test !(occursin("[[Test]]", read("Manifest.toml", String)))
         end
     end
 end
