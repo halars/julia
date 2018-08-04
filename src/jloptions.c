@@ -55,6 +55,7 @@ jl_options_t jl_options = { 0,    // quiet
                             0,    // method overwrite warning
                             1,    // can_inline
                             JL_OPTIONS_POLLY_ON, // polly
+                            NULL, // trace_compile
                             JL_OPTIONS_FAST_MATH_DEFAULT,
                             0,    // worker
                             NULL, // cookie
@@ -159,6 +160,7 @@ JL_DLLEXPORT void jl_parse_opts(int *argcp, char ***argvp)
            opt_warn_overwrite,
            opt_inline,
            opt_polly,
+           opt_trace_compile,
            opt_math_mode,
            opt_worker,
            opt_bind_to,
@@ -215,6 +217,7 @@ JL_DLLEXPORT void jl_parse_opts(int *argcp, char ***argvp)
         { "warn-overwrite",  required_argument, 0, opt_warn_overwrite },
         { "inline",          required_argument, 0, opt_inline },
         { "polly",           required_argument, 0, opt_polly },
+        { "trace-compile",   required_argument, 0, opt_trace_compile },
         { "math-mode",       required_argument, 0, opt_math_mode },
         { "handle-signals",  required_argument, 0, opt_handle_signals },
         // hidden command line options
@@ -566,6 +569,11 @@ restart_switch:
             else {
                 jl_errorf("julia: invalid argument to --polly (%s)", optarg);
             }
+            break;
+         case opt_trace_compile:
+            jl_options.trace_compile = strdup(optarg);
+            if (!jl_options.trace_compile)
+                jl_errorf("fatal error: failed to allocate memory: %s", strerror(errno));
             break;
         case opt_math_mode:
             if (!strcmp(optarg,"ieee"))

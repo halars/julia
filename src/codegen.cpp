@@ -327,7 +327,6 @@ static Function *box_ssavalue_func;
 static Function *expect_func;
 static Function *jldlsym_func;
 static Function *jltypeassert_func;
-static Function *jldepwarnpi_func;
 //static Function *jlgetnthfield_func;
 static Function *jlgetnthfieldchecked_func;
 //static Function *jlsetnthfield_func;
@@ -6830,7 +6829,7 @@ static void init_julia_llvm_env(Module *m)
     jl_func_sig = FunctionType::get(T_prjlvalue, ftargs, false);
     assert(jl_func_sig != NULL);
 
-    Type *vaelts[] = {T_pint8
+    Type *vaelts[] = {PointerType::get(T_int8, AddressSpace::Loaded)
 #ifdef STORE_ARRAY_LEN
                       , T_size
 #endif
@@ -7055,14 +7054,6 @@ static void init_julia_llvm_env(Module *m)
     jlgetfield_func = builtin_func_map[jl_f_getfield];
 
     jlapply2va_func = jlcall_func_to_llvm("jl_apply_2va", &jl_apply_2va, m);
-
-    std::vector<Type*> argsdepwarnpi(0);
-    argsdepwarnpi.push_back(T_size);
-    jldepwarnpi_func = Function::Create(FunctionType::get(T_void, argsdepwarnpi, false),
-                                        Function::ExternalLinkage,
-                                        "jl_depwarn_partial_indexing", m);
-    add_named_global(jldepwarnpi_func, &jl_depwarn_partial_indexing);
-
 
     std::vector<Type *> agargs(0);
     agargs.push_back(T_pprjlvalue);
@@ -7476,7 +7467,7 @@ extern "C" void *jl_init_llvm(void)
 // Mark our address spaces as non-integral
 #if JL_LLVM_VERSION >= 40000
     jl_data_layout = jl_ExecutionEngine->getDataLayout();
-    std::string DL = jl_data_layout.getStringRepresentation() + "-ni:10:11:12";
+    std::string DL = jl_data_layout.getStringRepresentation() + "-ni:10:11:12:13";
     jl_data_layout.reset(DL);
 #endif
 

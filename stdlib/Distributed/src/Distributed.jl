@@ -1,7 +1,5 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
-__precompile__(true)
-
 """
 Tools for distributed parallel processing.
 """
@@ -76,7 +74,7 @@ function _require_callback(mod::Base.PkgId)
         @sync for p in procs()
             p == 1 && continue
             @async remotecall_wait(p) do
-                Base._require(mod)
+                Base.require(mod)
                 nothing
             end
         end

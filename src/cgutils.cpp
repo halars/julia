@@ -238,6 +238,17 @@ static DIType *julia_type_to_di(jl_value_t *jt, DIBuilder *dbuilder, bool isboxe
     return (llvm::DIType*)jdt->ditype;
 }
 
+static Value *emit_pointer_from_objref_internal(jl_codectx_t &ctx, Value *V)
+{
+    CallInst *Call = ctx.builder.CreateCall(prepare_call(pointer_from_objref_func), V);
+#if JL_LLVM_VERSION >= 50000
+    Call->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#else
+    Call->addAttribute(AttributeSet::FunctionIndex, Attribute::ReadNone);
+#endif
+    return Call;
+}
+
 static Value *emit_pointer_from_objref(jl_codectx_t &ctx, Value *V)
 {
     unsigned AS = cast<PointerType>(V->getType())->getAddressSpace();
@@ -245,13 +256,10 @@ static Value *emit_pointer_from_objref(jl_codectx_t &ctx, Value *V)
         return ctx.builder.CreatePtrToInt(V, T_size);
     V = ctx.builder.CreateBitCast(decay_derived(V),
             PointerType::get(T_jlvalue, AddressSpace::Derived));
-    CallInst *Call = ctx.builder.CreateCall(prepare_call(pointer_from_objref_func), V);
-#if JL_LLVM_VERSION >= 50000
-    Call->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-#else
-    Call->addAttribute(AttributeSet::FunctionIndex, Attribute::ReadNone);
-#endif
-    return ctx.builder.CreatePtrToInt(Call, T_size);
+
+    return ctx.builder.CreatePtrToInt(
+        emit_pointer_from_objref_internal(ctx, V),
+        T_size);
 }
 
 // --- emitting pointers directly into code ---
@@ -1705,22 +1713,42 @@ static Value *emit_arraylen(jl_codectx_t &ctx, const jl_cgval_t &tinfo)
     return emit_arraylen_prim(ctx, tinfo);
 }
 
-static Value *emit_arrayptr(jl_codectx_t &ctx, const jl_cgval_t &tinfo, bool isboxed = false)
+static Value *emit_arrayptr_internal(jl_codectx_t &ctx, const jl_cgval_t &tinfo, Value *t, unsigned AS, bool isboxed)
 {
-    Value *t = boxed(ctx, tinfo);
-    Value *addr = ctx.builder.CreateStructGEP(jl_array_llvmt,
-                                          emit_bitcast(ctx, decay_derived(t), jl_parray_llvmt),
-                                          0); //index (not offset) of data field in jl_parray_llvmt
-
+    Value *addr =
+        ctx.builder.CreateStructGEP(jl_array_llvmt,
+            emit_bitcast(ctx, t, jl_parray_llvmt),
+            0); // index (not offset) of data field in jl_parray_llvmt
     MDNode *tbaa = arraytype_constshape(tinfo.typ) ? tbaa_const : tbaa_arrayptr;
+    PointerType *PT = cast<PointerType>(addr->getType());
+    PointerType *PPT = cast<PointerType>(PT->getElementType());
     if (isboxed) {
         addr = ctx.builder.CreateBitCast(addr,
-            PointerType::get(T_pprjlvalue, cast<PointerType>(addr->getType())->getAddressSpace()));
+            PointerType::get(PointerType::get(T_prjlvalue, AS),
+            PT->getAddressSpace()));
+    } else if (AS != PPT->getAddressSpace()) {
+        addr = ctx.builder.CreateBitCast(addr,
+            PointerType::get(
+                PointerType::get(PPT->getElementType(), AS),
+                PT->getAddressSpace()));
     }
     auto LI = ctx.builder.CreateLoad(addr);
     LI->setMetadata(LLVMContext::MD_nonnull, MDNode::get(jl_LLVMContext, None));
     tbaa_decorate(tbaa, LI);
     return LI;
+}
+
+static Value *emit_arrayptr(jl_codectx_t &ctx, const jl_cgval_t &tinfo, bool isboxed = false)
+{
+    Value *t = boxed(ctx, tinfo);
+    return emit_arrayptr_internal(ctx, tinfo, decay_derived(t), AddressSpace::Loaded, isboxed);
+}
+
+static Value *emit_unsafe_arrayptr(jl_codectx_t &ctx, const jl_cgval_t &tinfo, bool isboxed = false)
+{
+    Value *t = boxed(ctx, tinfo);
+    t = emit_pointer_from_objref_internal(ctx, decay_derived(t));
+    return emit_arrayptr_internal(ctx, tinfo, t, 0, isboxed);
 }
 
 static Value *emit_arrayptr(jl_codectx_t &ctx, const jl_cgval_t &tinfo, jl_value_t *ex, bool isboxed = false)
@@ -1851,8 +1879,6 @@ static Value *emit_array_nd_index(
             ctx.builder.CreateCondBr(ctx.builder.CreateICmpULT(last_index, last_dimension), endBB, failBB);
         } else {
             // There were fewer indices than dimensions; check the last remaining index
-            BasicBlock *depfailBB = BasicBlock::Create(jl_LLVMContext, "dimsdepfail"); // REMOVE AFTER 0.7
-            BasicBlock *depwarnBB = BasicBlock::Create(jl_LLVMContext, "dimsdepwarn"); // REMOVE AFTER 0.7
             BasicBlock *checktrailingdimsBB = BasicBlock::Create(jl_LLVMContext, "dimsib");
             assert(nd >= 0);
             Value *last_index = ii;
@@ -1865,23 +1891,12 @@ static Value *emit_array_nd_index(
             for (size_t k = nidxs+1; k < (size_t)nd; k++) {
                 BasicBlock *dimsokBB = BasicBlock::Create(jl_LLVMContext, "dimsok");
                 Value *dim = emit_arraysize_for_unsafe_dim(ctx, ainfo, ex, k, nd);
-                ctx.builder.CreateCondBr(ctx.builder.CreateICmpEQ(dim, ConstantInt::get(T_size, 1)), dimsokBB, depfailBB); // s/depfailBB/failBB/ AFTER 0.7
+                ctx.builder.CreateCondBr(ctx.builder.CreateICmpEQ(dim, ConstantInt::get(T_size, 1)), dimsokBB, failBB);
                 ctx.f->getBasicBlockList().push_back(dimsokBB);
                 ctx.builder.SetInsertPoint(dimsokBB);
             }
             Value *dim = emit_arraysize_for_unsafe_dim(ctx, ainfo, ex, nd, nd);
-            ctx.builder.CreateCondBr(ctx.builder.CreateICmpEQ(dim, ConstantInt::get(T_size, 1)), endBB, depfailBB);   // s/depfailBB/failBB/ AFTER 0.7
-
-            // Remove after 0.7: Ensure no dimensions were 0 and depwarn
-            ctx.f->getBasicBlockList().push_back(depfailBB);
-            ctx.builder.SetInsertPoint(depfailBB);
-            Value *total_length = emit_arraylen(ctx, ainfo);
-            ctx.builder.CreateCondBr(ctx.builder.CreateICmpULT(i, total_length), depwarnBB, failBB);
-
-            ctx.f->getBasicBlockList().push_back(depwarnBB);
-            ctx.builder.SetInsertPoint(depwarnBB);
-            ctx.builder.CreateCall(prepare_call(jldepwarnpi_func), ConstantInt::get(T_size, nidxs));
-            ctx.builder.CreateBr(endBB);
+            ctx.builder.CreateCondBr(ctx.builder.CreateICmpEQ(dim, ConstantInt::get(T_size, 1)), endBB, failBB);
         }
 
         ctx.f->getBasicBlockList().push_back(failBB);

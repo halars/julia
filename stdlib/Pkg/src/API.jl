@@ -432,65 +432,46 @@ function clone(url::String, name::String = "")
     develop(ctx, [Pkg.REPLMode.parse_package(url; add_or_develop=true)])
 end
 
-function dir(pkg::String, paths::String...)
-    @warn "Pkg.dir is only kept for legacy CI script reasons" maxlog=1
+function dir(pkg::String, paths::AbstractString...)
+    @warn "`Pkg.dir(pkgname, paths...)` is deprecated; instead, do `import $pkg; joinpath(dirname(pathof($pkg)), \"..\", paths...)`." maxlog=1
     pkgid = Base.identify_package(pkg)
-    pkgid == nothing && return nothing
+    pkgid === nothing && return nothing
     path = Base.locate_package(pkgid)
-    pkgid == nothing && return nothing
-    return joinpath(abspath(path, "..", "..", paths...))
+    path === nothing && return nothing
+    return abspath(path, "..", "..", paths...)
 end
 
 precompile() = precompile(Context())
 function precompile(ctx::Context)
     printpkgstyle(ctx, :Precompiling, "project...")
 
-    pkgids = [Base.PkgId(UUID(uuid), name) for (name, uuid) in ctx.env.project["deps"] if !(UUID(uuid) in  keys(ctx.stdlibs))]
-    if ctx.env.pkg !== nothing && isfile( joinpath( dirname(ctx.env.project_file), "src", ctx.env.pkg.name * ".jl"))
+    pkgids = [Base.PkgId(UUID(uuid), name) for (name, uuid) in ctx.env.project["deps"] if !(UUID(uuid) in keys(ctx.stdlibs))]
+    if ctx.env.pkg !== nothing && isfile( joinpath( dirname(ctx.env.project_file), "src", ctx.env.pkg.name * ".jl") )
         push!(pkgids, Base.PkgId(ctx.env.pkg.uuid, ctx.env.pkg.name))
     end
 
-    needs_to_be_precompiled = String[]
+    # TODO: since we are a complete list, but not topologically sorted, handling of recursion will be completely at random
     for pkg in pkgids
         paths = Base.find_all_in_cache_path(pkg)
         sourcepath = Base.locate_package(pkg)
         if sourcepath == nothing
+            # XXX: this isn't supposed to be fatal
             cmderror("couldn't find path to $(pkg.name) when trying to precompilie project")
         end
-        found_matching_precompile = false
+        stale = true
         for path_to_try in paths::Vector{String}
             staledeps = Base.stale_cachefile(sourcepath, path_to_try)
-            if !(staledeps isa Bool)
-                found_matching_precompile = true
-            end
+            staledeps === true && continue
+            # TODO: else, this returns a list of packages that may be loaded to make this valid (the topological list)
+            stale = false
+            break
         end
-        if !found_matching_precompile
-            # Only precompile packages that has contains `__precompile__` or `__precompile__(true)`
-            source = read(sourcepath, String)
-            if occursin(r"__precompile__\(\)|__precompile__\(true\)", source)
-                push!(needs_to_be_precompiled, pkg.name)
-            end
+        if stale
+            printpkgstyle(ctx, :Precompiling, pkg.name)
+            Base.compilecache(pkg, sourcepath)
         end
     end
-
-    # Perhaps running all the imports in the same process would avoid some overheda.
-    # Julia starts pretty fast though (0.3 seconds)
-    code = join(["import " * pkg for pkg in needs_to_be_precompiled], '\n') * "\nexit(0)"
-    for (i, pkg) in enumerate(needs_to_be_precompiled)
-        code = """
-            $(Base.load_path_setup_code())
-            import $pkg
-        """
-        printpkgstyle(ctx, :Precompiling, pkg * " [$i of $(length(needs_to_be_precompiled))]")
-        run(pipeline(ignorestatus(```
-        $(Base.julia_cmd()) -O$(Base.JLOptions().opt_level) --color=no --history-file=no
-        --startup-file=$(Base.JLOptions().startupfile != 2 ? "yes" : "no")
-        --compiled-modules="yes"
-        --depwarn=no
-        --eval $code
-        ```)))
-    end
-    return nothing
+    nothing
 end
 
 

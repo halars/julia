@@ -325,11 +325,6 @@ oftype(x, y) = convert(typeof(x), y)
 unsigned(x::Int) = reinterpret(UInt, x)
 signed(x::UInt) = reinterpret(Int, x)
 
-# conversions used by ccall
-ptr_arg_cconvert(::Type{Ptr{T}}, x) where {T} = cconvert(T, x)
-ptr_arg_unsafe_convert(::Type{Ptr{T}}, x) where {T} = unsafe_convert(T, x)
-ptr_arg_unsafe_convert(::Type{Ptr{Cvoid}}, x) = x
-
 """
     cconvert(T,x)
 
@@ -849,7 +844,11 @@ function iterate(x, state)
     return next(x, state)
 end
 const old_iterate_line_prev = (@__LINE__)
-iterate(x) = (@_inline_meta; iterate(x, start(x)))
+function iterate(x)
+    r = iterate(x, start(x))
+    depwarn("The start/next/done iteration protocol is deprecated. Implement `iterate(::$(typeof(x)))`.", :start)
+    r
+end
 
 struct LegacyIterationCompat{I,T,S}
     done::Bool
@@ -863,7 +862,7 @@ function has_non_default_iterate(T)
     world = ccall(:jl_get_world_counter, UInt, ())
     mt = Base._methods(iterate, Tuple{T}, -1, world)
     # Check if this is the above method
-    if (mt[1][3].file == @__FILE_SYMBOL__) && (mt[1][3].line == old_iterate_line_prev + 1)
+    if (mt[1][3].file == @__FILE_SYMBOL__) && (mt[1][3].line == old_iterate_line_prev + 2)
         return false
     end
     return true
@@ -872,6 +871,7 @@ end
 const compat_start_line_prev = (@__LINE__)
 function start(itr::T) where {T}
     has_non_default_iterate(T) || throw(MethodError(iterate, (itr,)))
+    depwarn("The start/next/done iteration protocol is deprecated. Use `iterate` instead.", :start)
     y = iterate(itr)
     y === nothing && return LegacyIterationCompat{T, Union{}, Union{}}()
     val, state = y

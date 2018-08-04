@@ -629,7 +629,8 @@ let
     @test !isdefined(a, :foo)
     @test !isdefined(2, :a)
 
-    @test_throws TypeError isdefined(2)
+    @test_throws TypeError isdefined(Base, 2)
+    @test_throws ArgumentError isdefined(2)
 end
 
 let
@@ -2450,7 +2451,7 @@ end
 # pull request #9534
 @test_throws BoundsError((1, 2), 3) begin; a, b, c = 1, 2; end
 let a = []
-    @test_broken try; a[]; catch ex; (ex::BoundsError).a === a && ex.i == (1,); end # TODO: Re-enable after PLI
+    @test try; a[]; catch ex; (ex::BoundsError).a === a && ex.i == (); end
     @test_throws BoundsError(a, (1, 2)) a[1, 2]
     @test_throws BoundsError(a, (10,)) a[10]
 end
@@ -6418,23 +6419,6 @@ end
 @test !Base.isvatuple(Tuple{T,Vararg{Int,2}} where T)
 @test !Base.isvatuple(Tuple{Int,Int,Vararg{Int,2}})
 
-# The old iteration protocol shims deprecation test
-struct DelegateIterator{T}
-    x::T
-end
-Base.start(itr::DelegateIterator) = start(itr.x)
-Base.next(itr::DelegateIterator, state) = next(itr.x, state)
-Base.done(itr::DelegateIterator, state) = done(itr.x, state)
-let A = [1], B = [], C = DelegateIterator([1]), D = DelegateIterator([]), E = Any[1,"abc"]
-    @test next(A, start(A))[1] == 1
-    @test done(A, next(A, start(A))[2])
-    @test done(B, start(B))
-    @test next(C, start(C))[1] == 1
-    @test done(C, next(C, start(C))[2])
-    @test done(D, start(D))
-    @test next(E, next(E, start(E))[2])[1] == "abc"
-end
-
 # Issue 27103
 function f27103()
     a = @isdefined x
@@ -6658,3 +6642,36 @@ end
 @test isa(foo28208(false, true), Tuple)
 @test foo28208(true, false) === missing
 @test foo28208(true, true) === nothing
+
+# Issue #28326
+function foo28326(a)
+    try
+        @inbounds a[1]
+        return false
+    catch
+        return true
+    end
+end
+@test foo28326(Vector(undef, 1))
+
+# Issue #28392
+struct Foo28392; end
+@test_throws MethodError iterate(Foo28392())
+
+# issue #28399
+function g28399(n)
+    for a = 1:n
+        c28399 = 1
+    end
+    ()->c28399
+end
+function f28399()
+    for a = __undef_28399__
+        c28399 = 1
+    end
+    ()->c28399
+end
+c28399 = 42
+@test g28399(0)() == 42
+@test g28399(1)() == 42
+@test_throws UndefVarError(:__undef_28399__) f28399()

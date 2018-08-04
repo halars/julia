@@ -121,7 +121,10 @@ temp_pkg_dir() do project_path; cd(project_path) do; mktempdir() do tmp_pkg_path
     p2 = git_init_package(tmp_pkg_path, joinpath(@__DIR__, "test_packages/$pkg2"))
     Pkg.REPLMode.pkgstr("add $p2")
     Pkg.REPLMode.pkgstr("pin $pkg2")
-    @eval import $(Symbol(pkg2))
+    # FIXME: this confuses the precompile logic to know what is going on with the user
+    # FIXME: why isn't this testing the Pkg after importing, rather than after freeing it
+    #@eval import Example
+    #@eval import $(Symbol(pkg2))
     @test Pkg.installed()[pkg2] == v"0.1.0"
     Pkg.REPLMode.pkgstr("free $pkg2")
     @test_throws CommandError Pkg.REPLMode.pkgstr("free $pkg2")
@@ -246,34 +249,36 @@ end # cd
 end # temp_pkg_dir
 
 # activate
-cd(mktempdir()) do
-    path = pwd()
-    pkg"activate ."
-    mkdir("Foo")
-    cd(mkdir("modules")) do
-        pkg"generate Foo"
+temp_pkg_dir() do project_path
+    cd(mktempdir()) do
+        path = pwd()
+        pkg"activate ."
+        mkdir("Foo")
+        cd(mkdir("modules")) do
+            pkg"generate Foo"
+        end
+        pkg"develop modules/Foo"
+        pkg"activate Foo" # activate path Foo over deps Foo
+        @test Base.active_project() == joinpath(path, "Foo", "Project.toml")
+        pkg"activate ."
+        rm("Foo"; force=true, recursive=true)
+        pkg"activate Foo" # activate path from developed Foo
+        @test Base.active_project() == joinpath(path, "modules", "Foo", "Project.toml")
+        pkg"activate ."
+        pkg"activate ./Foo" # activate empty directory Foo (sidestep the developed Foo)
+        @test Base.active_project() == joinpath(path, "Foo", "Project.toml")
+        pkg"activate ."
+        pkg"activate Bar" # activate empty directory Bar
+        @test Base.active_project() == joinpath(path, "Bar", "Project.toml")
+        pkg"activate ."
+        pkg"add Example" # non-deved deps should not be activated
+        pkg"activate Example"
+        @test Base.active_project() == joinpath(path, "Example", "Project.toml")
+        pkg"activate ."
+        cd(mkdir("tests"))
+        pkg"activate Foo" # activate developed Foo from another directory
+        @test Base.active_project() == joinpath(path, "modules", "Foo", "Project.toml")
     end
-    pkg"develop modules/Foo"
-    pkg"activate Foo" # activate path Foo over deps Foo
-    @test Base.active_project() == joinpath(path, "Foo", "Project.toml")
-    pkg"activate ."
-    rm("Foo"; force=true, recursive=true)
-    pkg"activate Foo" # activate path from developed Foo
-    @test Base.active_project() == joinpath(path, "modules", "Foo", "Project.toml")
-    pkg"activate ."
-    pkg"activate ./Foo" # activate empty directory Foo (sidestep the developed Foo)
-    @test Base.active_project() == joinpath(path, "Foo", "Project.toml")
-    pkg"activate ."
-    pkg"activate Bar" # activate empty directory Bar
-    @test Base.active_project() == joinpath(path, "Bar", "Project.toml")
-    pkg"activate ."
-    pkg"add Example" # non-deved deps should not be activated
-    pkg"activate Example"
-    @test Base.active_project() == joinpath(path, "Example", "Project.toml")
-    pkg"activate ."
-    cd(mkdir("tests"))
-    pkg"activate Foo" # activate developed Foo from another directory
-    @test Base.active_project() == joinpath(path, "modules", "Foo", "Project.toml")
 end
 
 # test relative dev paths (#490)
