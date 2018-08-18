@@ -60,7 +60,6 @@ export
     axpby!,
     bunchkaufman,
     bunchkaufman!,
-    chol,
     cholesky,
     cholesky!,
     cond,
@@ -134,7 +133,6 @@ export
     tr,
     transpose,
     transpose!,
-    transpose_type,
     tril,
     triu,
     tril!,
@@ -330,8 +328,6 @@ copy_oftype(A::AbstractArray{T,N}, ::Type{S}) where {T,N,S} = convert(AbstractAr
 
 include("adjtrans.jl")
 include("transpose.jl")
-include("conjarray.jl")
-include("rowvector.jl")
 
 include("exceptions.jl")
 include("generic.jl")

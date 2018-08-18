@@ -6,7 +6,7 @@ import ..@__MODULE__, ..parentmodule
 const Base = parentmodule(@__MODULE__)
 using .Base.Order
 using .Base: copymutable, LinearIndices, length, (:),
-    eachindex, axes, first, last, similar, start, next, done, zip, OrdinalRange,
+    eachindex, axes, first, last, similar, zip, OrdinalRange,
     AbstractVector, @inbounds, AbstractRange, @eval, @inline, Vector, @noinline,
     AbstractMatrix, AbstractUnitRange, isless, identity, eltype, >, <, <=, >=, |, +, -, *, !,
     extrema, sub_with_overflow, add_with_overflow, oneunit, div, getindex, setindex!,
@@ -370,6 +370,20 @@ struct InsertionSortAlg <: Algorithm end
 struct QuickSortAlg     <: Algorithm end
 struct MergeSortAlg     <: Algorithm end
 
+"""
+    PartialQuickSort{T <: Union{Int,OrdinalRange}}
+
+Indicate that a sorting function should use the partial quick sort
+algorithm. Partial quick sort returns the smallest `k` elements sorted from smallest
+to largest, finding them and sorting them using [`QuickSort`](@ref).
+
+Characteristics:
+  * *not stable*: does not preserve the ordering of elements which
+    compare equal (e.g. "a" and "A" in a sort of letters which
+    ignores case).
+  * *in-place* in memory.
+  * *divide-and-conquer*: sort strategy similar to [`MergeSort`](@ref).
+"""
 struct PartialQuickSort{T <: Union{Int,OrdinalRange}} <: Algorithm
     k::T
 end
@@ -379,8 +393,54 @@ Base.last(a::PartialQuickSort{Int}) = a.k
 Base.first(a::PartialQuickSort) = first(a.k)
 Base.last(a::PartialQuickSort) = last(a.k)
 
+"""
+    InsertionSort
+
+Indicate that a sorting function should use the insertion sort
+algorithm. Insertion sort traverses the collection one element
+at a time, inserting each element into its correct, sorted position in
+the output list.
+
+Characteristics:
+  * *stable*: preserves the ordering of elements which
+    compare equal (e.g. "a" and "A" in a sort of letters
+    which ignores case).
+  * *in-place* in memory.
+  * *quadratic performance* in the number of elements to be sorted:
+    it is well-suited to small collections but should not be used for large ones.
+"""
 const InsertionSort = InsertionSortAlg()
+"""
+    QuickSort
+
+Indicate that a sorting function should use the quick sort
+algorithm, which is *not* stable.
+
+Characteristics:
+  * *not stable*: does not preserve the ordering of elements which
+    compare equal (e.g. "a" and "A" in a sort of letters which
+    ignores case).
+  * *in-place* in memory.
+  * *divide-and-conquer*: sort strategy similar to [`MergeSort`](@ref).
+  * *good performance* for large collections.
+"""
 const QuickSort     = QuickSortAlg()
+"""
+    MergeSort
+
+Indicate that a sorting function should use the merge sort
+algorithm. Merge sort divides the collection into
+subcollections and repeatedly merges them, sorting each
+subcollection at each step, until the entire
+collection has been recombined in sorted form.
+
+Characteristics:
+  * *stable*: preserves the ordering of elements which compare
+    equal (e.g. "a" and "A" in a sort of letters which ignores
+    case).
+  * *not in-place* in memory.
+  * *divide-and-conquer* sort strategy.
+"""
 const MergeSort     = MergeSortAlg()
 
 const DEFAULT_UNSTABLE = QuickSort
@@ -902,12 +962,8 @@ function sort(A::AbstractArray;
               lt=isless,
               by=identity,
               rev::Union{Bool,Nothing}=nothing,
-              order::Ordering=Forward,
-              initialized::Union{Bool,Nothing}=nothing)
+              order::Ordering=Forward)
     dim = dims
-    if initialized !== nothing
-        Base.depwarn("`initialized` keyword argument is deprecated", :sort)
-    end
     order = ord(lt,by,rev,order)
     n = length(axes(A, dim))
     if dim != 1

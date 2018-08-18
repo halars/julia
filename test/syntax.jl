@@ -1300,13 +1300,12 @@ let ex = Meta.parse("@doc raw\"
     @test length(ex.args) == 3
 end
 
-# TODO: enable when 0.7 deprecations are removed
-#@test Meta.parse("\"x\"
-#                  # extra line, not a doc string
-#                  f(x) = x", 1)[1] === "x"
-#@test Meta.parse("\"x\"
-#
-#                  f(x) = x", 1)[1] === "x"
+@test Meta.parse("\"x\"
+                  # extra line, not a doc string
+                  f(x) = x", 1)[1] === "x"
+@test Meta.parse("\"x\"
+
+                  f(x) = x", 1)[1] === "x"
 
 # issue #26137
 # cases where parens enclose argument lists
@@ -1639,3 +1638,11 @@ end
 
 # #24221
 @test Meta.isexpr(Meta.lower(@__MODULE__, :(a=_)), :error)
+
+for ex in [:([x=1]), :(T{x=1})]
+    @test Meta.lower(@__MODULE__, ex) == Expr(:error, string("misplaced assignment statement in \"", ex, "\""))
+end
+
+# issue #28576
+@test Meta.isexpr(Meta.parse("1 == 2 ?"), :incomplete)
+@test Meta.isexpr(Meta.parse("1 == 2 ? 3 :"), :incomplete)

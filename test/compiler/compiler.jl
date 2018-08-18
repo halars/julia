@@ -10,14 +10,28 @@ using InteractiveUtils: code_llvm
 # demonstrate some of the type-size limits
 @test Core.Compiler.limit_type_size(Ref{Complex{T} where T}, Ref, Ref, 100, 0) == Ref
 @test Core.Compiler.limit_type_size(Ref{Complex{T} where T}, Ref{Complex{T} where T}, Ref, 100, 0) == Ref{Complex{T} where T}
+
 let comparison = Tuple{X, X} where X<:Tuple
     sig = Tuple{X, X} where X<:comparison
     ref = Tuple{X, X} where X
-    @test Core.Compiler.limit_type_size(sig, comparison, comparison, 100, 10) == comparison
-    @test Core.Compiler.limit_type_size(sig, ref, comparison, 100, 10) == ref
-    @test Core.Compiler.limit_type_size(Tuple{sig}, Tuple{ref}, comparison, 100, 10) == Tuple{ref}
-    @test Core.Compiler.limit_type_size(sig, ref, Tuple{comparison}, 100,  10) == sig
+    @test Core.Compiler.limit_type_size(sig, comparison, comparison, 100, 100) == Tuple{Tuple, Tuple}
+    @test Core.Compiler.limit_type_size(sig, ref, comparison, 100, 100) == Tuple{Any, Any}
+    @test Core.Compiler.limit_type_size(Tuple{sig}, Tuple{ref}, comparison, 100, 100) == Tuple{Tuple{Any, Any}}
+    @test Core.Compiler.limit_type_size(sig, ref, Tuple{comparison}, 100,  100) == Tuple{Tuple{X, X} where X<:Tuple, Tuple{X, X} where X<:Tuple}
+    @test Core.Compiler.limit_type_size(ref, sig, Union{}, 100, 100) == ref
 end
+
+let ref = Tuple{T, Val{T}} where T<:Val
+    sig = Tuple{T, Val{T}} where T<:(Val{T} where T<:Val)
+    @test Core.Compiler.limit_type_size(sig, ref, Union{}, 100, 100) == Tuple{Val, Val}
+    @test Core.Compiler.limit_type_size(ref, sig, Union{}, 100, 100) == ref
+end
+let ref = Tuple{T, Val{T}} where T<:(Val{T} where T<:(Val{T} where T<:(Val{T} where T<:Val)))
+    sig = Tuple{T, Val{T}} where T<:(Val{T} where T<:(Val{T} where T<:(Val{T} where T<:(Val{T} where T<:Val))))
+    @test Core.Compiler.limit_type_size(sig, ref, Union{}, 100, 100) == Tuple{Val, Val}
+    @test Core.Compiler.limit_type_size(ref, sig, Union{}, 100, 100) == ref
+end
+
 
 # PR 22120
 function tmerge_test(a, b, r, commutative=true)
@@ -559,7 +573,7 @@ end
 
 
 # issue #5575: inference with abstract types on a reasonably complex method tree
-zeros5575(::Type{T}, dims::Tuple{Vararg{Any,N}}) where {T,N} = Array{T,N}(dims)
+zeros5575(::Type{T}, dims::Tuple{Vararg{Any,N}}) where {T,N} = Array{T,N}(undef, dims)
 zeros5575(dims::Tuple) = zeros5575(Float64, dims)
 zeros5575(::Type{T}, dims...) where {T} = zeros5575(T, dims)
 zeros5575(a::AbstractArray) = zeros5575(a, Float64)
@@ -571,7 +585,7 @@ f5575() = zeros5575(Type[Float64][1], 1)
 @test Base.return_types(f5575, ())[1] == Vector
 
 g5575() = zeros(Type[Float64][1], 1)
-@test_broken Base.return_types(g5575, ())[1] == Vector # This should be fixed by removing deprecations
+@test Base.return_types(g5575, ())[1] == Vector
 
 
 # make sure Tuple{unknown} handles the possibility that `unknown` is a Vararg
@@ -987,8 +1001,8 @@ end
 @test isdefined_tfunc(Core.SimpleVector, Const(1)) === Const(false)
 @test Const(false) ⊑ isdefined_tfunc(Const(:x), Symbol)
 @test Const(false) ⊑ isdefined_tfunc(Const(:x), Const(:y))
-@test isdefined_tfunc(Vector{Int}, Const(1)) == Bool
-@test isdefined_tfunc(Vector{Any}, Const(1)) == Bool
+@test isdefined_tfunc(Vector{Int}, Const(1)) == Const(false)
+@test isdefined_tfunc(Vector{Any}, Const(1)) == Const(false)
 @test isdefined_tfunc(Module, Any, Any) === Union{}
 @test isdefined_tfunc(Module, Int) === Union{}
 @test isdefined_tfunc(Tuple{Any,Vararg{Any}}, Const(0)) === Const(false)
@@ -1950,3 +1964,29 @@ end
 h28356() = f28356(Any[Float64][1])
 
 @test h28356() isa S28356{Float64}
+
+# Issue #28444
+mutable struct foo28444
+    a::Int
+    b::Int
+end
+function bar28444()
+    a = foo28444(1, 2)
+    c, d = a.a, a.b
+    e = (c, d)
+    e[1]
+end
+@test bar28444() == 1
+
+# issue #28641
+struct VoxelIndices{T <: Integer}
+    voxCrnrPos::NTuple{8,NTuple{3,T}}
+    voxEdgeCrnrs::NTuple{19, NTuple{2,T}}
+    voxEdgeDir::NTuple{19,T}
+    voxEdgeIx::NTuple{8,NTuple{8,T}}
+    subTets::NTuple{6,NTuple{4,T}}
+    tetEdgeCrnrs::NTuple{6,NTuple{2,T}}
+    tetTri::NTuple{16,NTuple{6,T}}
+end
+f28641(x::VoxelIndices, f) = getfield(x, f)
+@test Base.return_types(f28641, (Any,Symbol)) == Any[Tuple]

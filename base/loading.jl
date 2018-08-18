@@ -769,16 +769,14 @@ precompilableerror(@nospecialize ex) = false
 
 # Call __precompile__(false) at the top of a tile prevent it from being precompiled (false)
 """
-    __precompile__(false)
+    __precompile__(isprecompilable::Bool)
 
-Specify that the file calling this function is not precompilable.
+Specify whether the file calling this function is precompilable, defaulting to `true`.
 If a module or file is *not* safely precompilable, it should call `__precompile__(false)` in
 order to throw an error if Julia attempts to precompile it.
 """
 @noinline function __precompile__(isprecompilable::Bool=true)
-    if isprecompilable
-        depwarn("__precompile__() is now the default", :__precompile__)
-    elseif 0 != ccall(:jl_generating_output, Cint, ())
+    if !isprecompilable && ccall(:jl_generating_output, Cint, ()) != 0
         throw(PrecompilableError())
     end
     nothing
@@ -818,7 +816,7 @@ function require(into::Module, mod::Symbol)
         if where.uuid === nothing
             throw(ArgumentError("""
                 Package $mod not found in current path:
-                - Run `Pkg.add($(repr(String(mod))))` to install the $mod package.
+                - Run `import Pkg; Pkg.add($(repr(String(mod))))` to install the $mod package.
                 """))
         else
             s = """
@@ -1072,7 +1070,6 @@ function evalfile(path::AbstractString, args::Vector{String}=String[])
         Expr(:toplevel,
              :(const ARGS = $args),
              :(eval(x) = $(Expr(:core, :eval))(__anon__, x)),
-             :(@deprecate eval(m, x) Core.eval(m, x)),
              :(include(x) = $(Expr(:top, :include))(__anon__, x)),
              :(include($path))))
 end

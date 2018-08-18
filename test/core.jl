@@ -141,6 +141,8 @@ end
 @test typejoin(Tuple{Vararg{Int,2}}, Tuple{Int,Int,Int}) === Tuple{Int,Int,Vararg{Int}}
 @test typejoin(Tuple{Vararg{Int,2}}, Tuple{Vararg{Int}}) === Tuple{Vararg{Int}}
 
+@test typejoin(NTuple{3,Tuple}, NTuple{2,T} where T) == Tuple{Any,Any,Vararg{Tuple}}
+
 # issue #26321
 struct T26321{N,S<:NTuple{N}}
     t::S
@@ -6675,3 +6677,28 @@ c28399 = 42
 @test g28399(0)() == 42
 @test g28399(1)() == 42
 @test_throws UndefVarError(:__undef_28399__) f28399()
+
+# issue #28445
+mutable struct foo28445
+    x::Int
+end
+
+@noinline make_foo28445() = (foo28445(1), foo28445(rand(1:10)), foo28445(rand(1:10)))
+@noinline function use_tuple28445(c)
+    @test isa(c[2], foo28445)
+    @test isa(c[3], foo28445)
+end
+
+function repackage28445()
+    (_, a, b) = make_foo28445()
+    GC.gc()
+    c = (foo28445(1), foo28445(2), a, b)
+    use_tuple28445(c)
+    true
+end
+@test repackage28445()
+
+# issue #28597
+@test_throws ErrorException Array{Int, 2}(undef, 0, -10)
+@test_throws ErrorException Array{Int, 2}(undef, -10, 0)
+@test_throws ErrorException Array{Int, 2}(undef, -1, -1)

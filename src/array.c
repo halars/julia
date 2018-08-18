@@ -21,19 +21,19 @@ extern "C" {
 #define JL_ARRAY_ALIGN(jl_value, nbytes) LLT_ALIGN(jl_value, nbytes)
 
 // array constructors ---------------------------------------------------------
-char *jl_array_typetagdata(jl_array_t *a)
+char *jl_array_typetagdata(jl_array_t *a) JL_NOTSAFEPOINT
 {
     assert(jl_array_isbitsunion(a));
     return ((char*)jl_array_data(a)) + ((jl_array_ndims(a) == 1 ? (a->maxsize - a->offset) : jl_array_len(a)) * a->elsize) + a->offset;
 }
 
-JL_DLLEXPORT int jl_array_store_unboxed(jl_value_t *eltype)
+JL_DLLEXPORT int jl_array_store_unboxed(jl_value_t *eltype) JL_NOTSAFEPOINT
 {
     size_t fsz = 0, al = 0;
     return jl_islayout_inline(eltype, &fsz, &al);
 }
 
-STATIC_INLINE jl_value_t *jl_array_owner(jl_array_t *a)
+STATIC_INLINE jl_value_t *jl_array_owner(jl_array_t *a JL_PROPAGATES_ROOT) JL_NOTSAFEPOINT
 {
     if (a->flags.how == 3) {
         a = (jl_array_t*)jl_array_data_owner(a);
@@ -61,8 +61,9 @@ static jl_array_t *_new_array_(jl_value_t *atype, uint32_t ndims, size_t *dims,
     jl_array_t *a;
 
     for(i=0; i < ndims; i++) {
-        wideint_t prod = (wideint_t)nel * (wideint_t)dims[i];
-        if (prod > (wideint_t) MAXINTVAL)
+        size_t di = dims[i];
+        wideint_t prod = (wideint_t)nel * (wideint_t)di;
+        if (prod > (wideint_t) MAXINTVAL || di > MAXINTVAL)
             jl_error("invalid Array dimensions");
         nel = prod;
     }

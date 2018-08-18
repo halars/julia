@@ -1374,18 +1374,14 @@ let src = code_typed(my_fun28173, (Int,))[1][1]
 end
 
 # issue #27352
-mktemp() do fname, io
-    redirect_stdout(io) do
-        @test_deprecated print(nothing)
-        @test_deprecated print(stdout, nothing)
-        @test_deprecated string(nothing)
-        @test_deprecated string(1, "", nothing)
-        @test_deprecated let x = nothing; "x = $x" end
-        @test let x = nothing; "x = $(repr(x))" end == "x = nothing"
-        @test_deprecated `/bin/foo $nothing`
-        @test_deprecated `$nothing`
-    end
-end
+@test_throws ArgumentError print(nothing)
+@test_throws ArgumentError print(stdout, nothing)
+@test_throws ArgumentError string(nothing)
+@test_throws ArgumentError string(1, "", nothing)
+@test_throws ArgumentError let x = nothing; "x = $x" end
+@test let x = nothing; "x = $(repr(x))" end == "x = nothing"
+@test_throws ArgumentError `/bin/foo $nothing`
+@test_throws ArgumentError `$nothing`
 
 struct X28004
     value::Any
@@ -1401,3 +1397,8 @@ end
     @test replstr(Union{X28004,Vector}[X28004(Any[X28004(1)])]) ==
         "1-element Array{Union{X28004, Array{T,1} where T},1}:\n X(Any[X(1)])"
 end
+
+# Issue 25589 - Underlines in cmd printing
+replstrcolor(x) = sprint((io, x) -> show(IOContext(io, :limit => true, :color => true),
+                                         MIME("text/plain"), x), x)
+@test occursin("\e[", replstrcolor(`curl abc`))
