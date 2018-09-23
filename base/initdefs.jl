@@ -90,8 +90,8 @@ function current_project(dir::AbstractString)
             file = joinpath(dir, proj)
             isfile_casesensitive(file) && return file
         end
-        # bail at home directory or top of git repo
-        (dir == home || ispath(joinpath(dir, ".git"))) && break
+        # bail at home directory
+        dir == home && break
         old, dir = dir, dirname(dir)
         dir == old && break
     end
@@ -138,8 +138,9 @@ function init_load_path()
         unsafe_string(Base.JLOptions().project) :
         get(ENV, "JULIA_PROJECT", nothing))
     HOME_PROJECT[] =
+        project == nothing ? nothing :
         project == "" ? nothing :
-        project == "@." ? current_project() : project
+        project == "@." ? current_project() : abspath(project)
     append!(empty!(LOAD_PATH), paths)
 end
 

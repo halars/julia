@@ -574,9 +574,9 @@ end
 """
     open(command, stdio=devnull; write::Bool = false, read::Bool = !write)
 
-Start running `command` asynchronously, and return a tuple `(stream,process)`.  If `read` is
-true, then `stream` reads from the process's standard output and `stdio` optionally
-specifies the process's standard input stream.  If `write` is true, then `stream` writes to
+Start running `command` asynchronously, and return a `process` object.  If `read` is
+true, then `process` reads from the process's standard output and `stdio` optionally
+specifies the process's standard input stream.  If `write` is true, then `process` writes to
 the process's standard input and `stdio` optionally specifies the process's standard output
 stream.
 """
@@ -625,6 +625,11 @@ function open(f::Function, cmds::AbstractCmd, args...)
     return ret
 end
 
+"""
+    read(command::Cmd)
+
+Run `command` and return the resulting output as an array of bytes.
+"""
 function read(cmd::AbstractCmd)
     procs = open(cmd, "r", devnull)
     bytes = read(procs.out)
@@ -632,6 +637,11 @@ function read(cmd::AbstractCmd)
     return bytes
 end
 
+"""
+    read(command::Cmd, String)
+
+Run `command` and return the resulting output as a `String`.
+"""
 read(cmd::AbstractCmd, ::Type{String}) = String(read(cmd))
 
 """

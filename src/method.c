@@ -220,7 +220,7 @@ static void jl_code_info_set_ast(jl_code_info_t *li, jl_expr_t *ast)
     li->code = body;
     jl_gc_wb(li, li->code);
     size_t n = jl_array_len(body);
-    jl_value_t **bd = (jl_value_t**)jl_array_data((jl_array_t*)li->code);
+    jl_value_t **bd = (jl_value_t**)jl_array_ptr_data((jl_array_t*)li->code);
     for (j = 0; j < n; j++) {
         jl_value_t *st = bd[j];
         if (jl_is_expr(st) && ((jl_expr_t*)st)->head == meta_sym) {
@@ -460,7 +460,7 @@ jl_method_instance_t *jl_get_specialized(jl_method_t *m, jl_value_t *types, jl_s
     new_linfo->specTypes = types;
     new_linfo->sparam_vals = sp;
     new_linfo->min_world = m->min_world;
-    new_linfo->max_world = ~(size_t)0;
+    new_linfo->max_world = m->max_world;
     return new_linfo;
 }
 
@@ -576,7 +576,7 @@ JL_DLLEXPORT jl_method_t *jl_new_method_uninit(jl_module_t *module)
     jl_ptls_t ptls = jl_get_ptls_states();
     jl_method_t *m =
         (jl_method_t*)jl_gc_alloc(ptls, sizeof(jl_method_t), jl_method_type);
-    m->specializations.unknown = jl_nothing;
+    m->specializations = jl_nothing;
     m->sig = NULL;
     m->sparam_syms = NULL;
     m->ambig = jl_nothing;
@@ -590,16 +590,17 @@ JL_DLLEXPORT jl_method_t *jl_new_method_uninit(jl_module_t *module)
     m->line = 0;
     m->called = 0xff;
     m->nospecialize = module->nospecialize;
-    m->invokes.unknown = NULL;
+    m->invokes = NULL;
     m->isva = 0;
     m->nargs = 0;
     m->traced = 0;
     m->min_world = 1;
+    m->max_world = ~(size_t)0;
     JL_MUTEX_INIT(&m->writelock);
     return m;
 }
 
-jl_array_t *jl_all_methods;
+jl_array_t *jl_all_methods JL_GLOBALLY_ROOTED;
 static jl_method_t *jl_new_method(
         jl_code_info_t *definition,
         jl_sym_t *name,
@@ -639,6 +640,7 @@ static jl_method_t *jl_new_method(
 
     JL_GC_POP();
     m->min_world = ++jl_world_counter;
+    m->max_world = ~(size_t)0;
     return m;
 }
 
@@ -695,7 +697,7 @@ JL_DLLEXPORT jl_value_t *jl_generic_function_def(jl_sym_t *name,
     return gf;
 }
 
-static jl_datatype_t *first_arg_datatype(jl_value_t *a, int got_tuple1)
+static jl_datatype_t *first_arg_datatype(jl_value_t *a JL_PROPAGATES_ROOT, int got_tuple1) JL_NOTSAFEPOINT
 {
     if (jl_is_datatype(a)) {
         if (got_tuple1)
@@ -726,13 +728,13 @@ static jl_datatype_t *first_arg_datatype(jl_value_t *a, int got_tuple1)
 }
 
 // get DataType of first tuple element, or NULL if cannot be determined
-JL_DLLEXPORT jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes)
+JL_DLLEXPORT jl_datatype_t *jl_first_argument_datatype(jl_value_t *argtypes JL_PROPAGATES_ROOT) JL_NOTSAFEPOINT
 {
     return first_arg_datatype(argtypes, 0);
 }
 
 // get DataType implied by a single given type, or `nothing`
-JL_DLLEXPORT jl_value_t *jl_argument_datatype(jl_value_t *argt)
+JL_DLLEXPORT jl_value_t *jl_argument_datatype(jl_value_t *argt JL_PROPAGATES_ROOT) JL_NOTSAFEPOINT
 {
     jl_datatype_t *dt = first_arg_datatype(argt, 1);
     if (dt == NULL)

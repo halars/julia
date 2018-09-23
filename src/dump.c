@@ -580,7 +580,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
             arraylist_push(&reinit_list, (void*)pos);
             arraylist_push(&reinit_list, (void*)3);
         }
-        if (jl_is_method(v) && jl_typeof(((jl_method_t*)v)->specializations.unknown) == (jl_value_t*)jl_typemap_level_type) {
+        if (jl_is_method(v) && jl_typeof(((jl_method_t*)v)->specializations) == (jl_value_t*)jl_typemap_level_type) {
             arraylist_push(&reinit_list, (void*)pos);
             arraylist_push(&reinit_list, (void*)4);
         }
@@ -640,14 +640,15 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
     }
     else if (jl_is_array(v)) {
         jl_array_t *ar = (jl_array_t*)v;
-        if (ar->flags.ndims == 1 && ar->elsize < 128) {
+        int isunion = jl_is_uniontype(jl_tparam0(jl_typeof(ar)));
+        if (ar->flags.ndims == 1 && ar->elsize <= 0x3f) {
             write_uint8(s->s, TAG_ARRAY1D);
-            write_uint8(s->s, (ar->flags.ptrarray<<7) | (ar->elsize & 0x7f));
+            write_uint8(s->s, (ar->flags.ptrarray<<7) | (isunion << 6) | (ar->elsize & 0x3f));
         }
         else {
             write_uint8(s->s, TAG_ARRAY);
             write_uint16(s->s, ar->flags.ndims);
-            write_uint16(s->s, (ar->flags.ptrarray<<15) | (ar->elsize & 0x7fff));
+            write_uint16(s->s, (ar->flags.ptrarray << 15) | (isunion << 14) | (ar->elsize & 0x3fff));
         }
         for (i = 0; i < ar->flags.ndims; i++)
             jl_serialize_value(s, jl_box_long(jl_array_dim(ar,i)));
@@ -781,8 +782,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         jl_datatype_t *gf = jl_first_argument_datatype((jl_value_t*)m->sig);
         assert(jl_is_datatype(gf) && gf->name->mt);
         external_mt = !module_in_worklist(gf->name->mt->module);
-        union jl_typemap_t *tf = &m->specializations;
-        jl_serialize_value(s, tf->unknown);
+        jl_serialize_value(s, m->specializations);
         jl_serialize_value(s, (jl_value_t*)m->name);
         jl_serialize_value(s, (jl_value_t*)m->file);
         write_int32(s->s, m->line);
@@ -801,7 +801,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         jl_serialize_value(s, (jl_value_t*)m->source);
         jl_serialize_value(s, (jl_value_t*)m->unspecialized);
         jl_serialize_value(s, (jl_value_t*)m->generator);
-        jl_serialize_value(s, (jl_value_t*)m->invokes.unknown);
+        jl_serialize_value(s, (jl_value_t*)m->invokes);
     }
     else if (jl_is_method_instance(v)) {
         write_uint8(s->s, TAG_METHOD_INSTANCE);
@@ -999,7 +999,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
                 jl_serialize_value(s, jl_nothing);
                 jl_serialize_value(s, node->targ.values);
                 jl_serialize_value(s, node->linear);
-                jl_serialize_value(s, node->any.unknown);
+                jl_serialize_value(s, node->any);
                 jl_serialize_value(s, node->key);
                 return;
             }
@@ -1212,7 +1212,7 @@ static void write_mod_list(ios_t *s, jl_array_t *a)
 }
 
 // "magic" string and version header of .ji file
-static const int JI_FORMAT_VERSION = 6;
+static const int JI_FORMAT_VERSION = 7;
 static const char JI_MAGIC[] = "\373jli\r\n\032\n"; // based on PNG signature
 static const uint16_t BOM = 0xFEFF; // byte-order marker
 static void write_header(ios_t *s)
@@ -1497,18 +1497,20 @@ static jl_value_t *jl_deserialize_value_array(jl_serializer_state *s, uint8_t ta
 {
     int usetable = (s->mode != MODE_IR);
     int16_t i, ndims;
-    int isunboxed, elsize;
+    int isunboxed, isunion, elsize;
     if (tag == TAG_ARRAY1D) {
         ndims = 1;
         elsize = read_uint8(s->s);
         isunboxed = !(elsize >> 7);
-        elsize = elsize & 0x7f;
+        isunion = elsize >> 6;
+        elsize = elsize & 0x3f;
     }
     else {
         ndims = read_uint16(s->s);
         elsize = read_uint16(s->s);
         isunboxed = !(elsize >> 15);
-        elsize = elsize & 0x7fff;
+        isunion = elsize >> 14;
+        elsize = elsize & 0x3fff;
     }
     uintptr_t pos = backref_list.len;
     if (usetable)
@@ -1517,7 +1519,8 @@ static jl_value_t *jl_deserialize_value_array(jl_serializer_state *s, uint8_t ta
     for (i = 0; i < ndims; i++) {
         dims[i] = jl_unbox_long(jl_deserialize_value(s, NULL));
     }
-    jl_array_t *a = jl_new_array_for_deserialization((jl_value_t*)NULL, ndims, dims, isunboxed, elsize);
+    jl_array_t *a = jl_new_array_for_deserialization(
+            (jl_value_t*)NULL, ndims, dims, isunboxed, isunion, elsize);
     if (usetable)
         backref_list.items[pos] = a;
     jl_value_t *aty = jl_deserialize_value(s, &jl_astaggedvalue(a)->type);
@@ -1638,13 +1641,14 @@ static jl_value_t *jl_deserialize_value_method(jl_serializer_state *s, jl_value_
         arraylist_push(&flagref_list, (void*)pos);
         return (jl_value_t*)m;
     }
-    m->specializations.unknown = jl_deserialize_value(s, (jl_value_t**)&m->specializations);
-    jl_gc_wb(m, m->specializations.unknown);
+    m->specializations = jl_deserialize_value(s, (jl_value_t**)&m->specializations);
+    jl_gc_wb(m, m->specializations);
     m->name = (jl_sym_t*)jl_deserialize_value(s, NULL);
     jl_gc_wb(m, m->name);
     m->file = (jl_sym_t*)jl_deserialize_value(s, NULL);
     m->line = read_int32(s->s);
     m->min_world = jl_world_counter;
+    m->max_world = ~(size_t)0;
     m->ambig = jl_deserialize_value(s, (jl_value_t**)&m->ambig);
     jl_gc_wb(m, m->ambig);
     m->called = read_int32(s->s);
@@ -1668,8 +1672,8 @@ static jl_value_t *jl_deserialize_value_method(jl_serializer_state *s, jl_value_
     m->generator = jl_deserialize_value(s, (jl_value_t**)&m->generator);
     if (m->generator)
         jl_gc_wb(m, m->generator);
-    m->invokes.unknown = jl_deserialize_value(s, (jl_value_t**)&m->invokes);
-    jl_gc_wb(m, m->invokes.unknown);
+    m->invokes = jl_deserialize_value(s, (jl_value_t**)&m->invokes);
+    jl_gc_wb(m, m->invokes);
     m->traced = 0;
     JL_MUTEX_INIT(&m->writelock);
     return (jl_value_t*)m;
@@ -2330,7 +2334,7 @@ static void jl_finalize_serializer(jl_serializer_state *s)
     write_int32(s->s, -1);
 }
 
-void jl_typemap_rehash(union jl_typemap_t ml, int8_t offs);
+void jl_typemap_rehash(jl_typemap_t *ml, int8_t offs);
 static void jl_reinit_item(jl_value_t *v, int how, arraylist_t *tracee_list)
 {
     jl_ptls_t ptls = jl_get_ptls_states();
@@ -2992,7 +2996,7 @@ static jl_method_instance_t *jl_recache_method_instance(jl_method_instance_t *li
     //assert(ti != jl_bottom_type); (void)ti;
     if (ti == jl_bottom_type)
         env = jl_emptysvec; // the intersection may fail now if the type system had made an incorrect subtype env in the past
-    jl_method_instance_t *_new = jl_specializations_get_linfo(m, (jl_value_t*)argtypes, env, jl_world_counter);
+    jl_method_instance_t *_new = jl_specializations_get_linfo(m, (jl_value_t*)argtypes, env, jl_world_counter < max_world ? jl_world_counter : max_world);
     _new->max_world = max_world;
     jl_update_backref_list((jl_value_t*)li, (jl_value_t*)_new, start);
     return _new;
@@ -3117,8 +3121,10 @@ static jl_value_t *_jl_restore_incremental(ios_t *f, jl_array_t *mod_array)
     jl_gc_enable_finalizers(ptls, 1); // make sure we don't run any Julia code concurrently before this point
     if (tracee_list) {
         jl_methtable_t *mt;
-        while ((mt = (jl_methtable_t*)arraylist_pop(tracee_list)) != NULL)
+        while ((mt = (jl_methtable_t*)arraylist_pop(tracee_list)) != NULL) {
+            JL_GC_PROMISE_ROOTED(mt);
             jl_typemap_visitor(mt->defs, trace_method, NULL);
+        }
         arraylist_free(tracee_list);
         free(tracee_list);
     }

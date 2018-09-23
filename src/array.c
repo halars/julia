@@ -53,7 +53,7 @@ size_t jl_arr_xtralloc_limit = 0;
 #define MAXINTVAL (((size_t)-1)>>1)
 
 static jl_array_t *_new_array_(jl_value_t *atype, uint32_t ndims, size_t *dims,
-                               int isunboxed, int elsz)
+                               int isunboxed, int isunion, int elsz)
 {
     jl_ptls_t ptls = jl_get_ptls_states();
     size_t i, tot, nel=1;
@@ -67,7 +67,7 @@ static jl_array_t *_new_array_(jl_value_t *atype, uint32_t ndims, size_t *dims,
             jl_error("invalid Array dimensions");
         nel = prod;
     }
-    int isunion = atype != NULL && jl_is_uniontype(jl_tparam0(atype));
+    assert(atype == NULL || isunion == jl_is_uniontype(jl_tparam0(atype)));
     if (isunboxed) {
         wideint_t prod = (wideint_t)elsz * (wideint_t)nel;
         if (prod > (wideint_t) MAXINTVAL)
@@ -149,18 +149,19 @@ static inline jl_array_t *_new_array(jl_value_t *atype, uint32_t ndims, size_t *
     jl_value_t *eltype = jl_tparam0(atype);
     size_t elsz = 0, al = 0;
     int isunboxed = jl_islayout_inline(eltype, &elsz, &al);
+    int isunion = jl_is_uniontype(eltype);
     if (!isunboxed) {
         elsz = sizeof(void*);
         al = elsz;
     }
 
-    return _new_array_(atype, ndims, dims, isunboxed, elsz);
+    return _new_array_(atype, ndims, dims, isunboxed, isunion, elsz);
 }
 
 jl_array_t *jl_new_array_for_deserialization(jl_value_t *atype, uint32_t ndims, size_t *dims,
-                                             int isunboxed, int elsz)
+                                             int isunboxed, int isunion, int elsz)
 {
-    return _new_array_(atype, ndims, dims, isunboxed, elsz);
+    return _new_array_(atype, ndims, dims, isunboxed, isunion, elsz);
 }
 
 #ifndef JL_NDEBUG
@@ -547,13 +548,15 @@ JL_DLLEXPORT int jl_array_isassigned(jl_array_t *a, size_t i)
     return 1;
 }
 
-JL_DLLEXPORT void jl_arrayset(jl_array_t *a, jl_value_t *rhs, size_t i)
+JL_DLLEXPORT void jl_arrayset(jl_array_t *a JL_ROOTING_ARGUMENT, jl_value_t *rhs JL_ROOTED_ARGUMENT JL_MAYBE_UNROOTED, size_t i)
 {
     assert(i < jl_array_len(a));
     jl_value_t *eltype = jl_tparam0(jl_typeof(a));
     if (eltype != (jl_value_t*)jl_any_type) {
+        JL_GC_PUSH1(&rhs);
         if (!jl_isa(rhs, eltype))
             jl_type_error("arrayset", eltype, rhs);
+        JL_GC_POP();
     }
     if (!a->flags.ptrarray) {
         if (jl_is_uniontype(eltype)) {
@@ -1113,8 +1116,10 @@ JL_DLLEXPORT jl_array_t *jl_array_copy(jl_array_t *ary)
 {
     size_t elsz = ary->elsize;
     size_t len = jl_array_len(ary);
+    int isunion = jl_is_uniontype(jl_tparam0(jl_typeof(ary)));
     jl_array_t *new_ary = _new_array_(jl_typeof(ary), jl_array_ndims(ary),
-                                      &ary->nrows, !ary->flags.ptrarray, elsz);
+                                      &ary->nrows, !ary->flags.ptrarray,
+                                      isunion, elsz);
     memcpy(new_ary->data, ary->data, len * elsz);
     // ensure isbits union arrays copy their selector bytes correctly
     if (jl_array_isbitsunion(ary))

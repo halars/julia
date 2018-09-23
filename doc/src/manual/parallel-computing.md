@@ -7,22 +7,22 @@ the different levels of parallelism offered by Julia. We can divide them in thre
 2. Multi-Threading
 3. Multi-Core or Distributed Processing
 
-We will first consider Julia [Tasks (aka Coroutines)](@ref man-tasks) and other modules that rely on the Julia runtime library, that allow to suspend and resume computations with full control of inter-`Tasks` communication without having to manually interface with the operative system's scheduler.
-Julia also allows to communicate between `Tasks` through operations like [`wait`](@ref) and [`fetch`](@ref).
-Communication and data synchronization is managed through [`Channel`](@ref)s, which are the conduit
-that allows inter-`Tasks` communication.
+We will first consider Julia [Tasks (aka Coroutines)](@ref man-tasks) and other modules that rely on the Julia runtime library, that allow us to suspend and resume computations with full control of inter-`Tasks` communication without having to manually interface with the operating system's scheduler.
+Julia also supports communication between `Tasks` through operations like [`wait`](@ref) and [`fetch`](@ref).
+Communication and data synchronization is managed through [`Channel`](@ref)s, which are the conduits
+that provide inter-`Tasks` communication.
 
 Julia also supports experimental multi-threading, where execution is forked and an anonymous function is run across all
 threads.
-Described as a fork-join approach, parallel threads are branched off and they all have to join the Julia main thread to make serial execution continue.
+Known as the fork-join approach, parallel threads execute independently, and must ultimately be joined in Julia's main thread to allow serial execution to continue.
 Multi-threading is supported using the `Base.Threads` module that is still considered experimental, as Julia is
-not fully thread-safe yet. In particular segfaults seem to emerge for I\O operations and task switching.
-As an un up-to-date reference, keep an eye on [the issue tracker](https://github.com/JuliaLang/julia/issues?q=is%3Aopen+is%3Aissue+label%3Amultithreading).
+not yet fully thread-safe. In particular segfaults seem to occur during I/O operations and task switching.
+As an up-to-date reference, keep an eye on [the issue tracker](https://github.com/JuliaLang/julia/issues?q=is%3Aopen+is%3Aissue+label%3Amultithreading).
 Multi-Threading should only be used if you take into consideration global variables, locks and
-atomics, so we will explain it later.
+atomics, all of which are explained later.
 
-In the end we will present Julia's way to distributed and parallel computing. With scientific computing
-in mind, Julia natively implements interfaces to distribute a process through multiple cores or machines.
+In the end we will present Julia's approach to distributed and parallel computing. With scientific computing
+in mind, Julia natively implements interfaces to distribute a process across multiple cores or machines.
 Also we will mention useful external packages for distributed programming like `MPI.jl` and `DistributedArrays.jl`.
 
 # Coroutines
@@ -77,7 +77,7 @@ A channel can be visualized as a pipe, i.e., it has a write end and a read end :
 
     # we can schedule `n` instances of `foo` to be active concurrently.
     for _ in 1:n
-        @schedule foo()
+        @async foo()
     end
     ```
 * Channels are created via the `Channel{T}(sz)` constructor. The channel will only hold objects
@@ -158,7 +158,7 @@ julia> data = [i for i in c]
 
 Consider a simple example using channels for inter-task communication. We start 4 tasks to process
 data from a single `jobs` channel. Jobs, identified by an id (`job_id`), are written to the channel.
-Each task in this simulation reads a `job_id`, waits for a random amout of time and writes back
+Each task in this simulation reads a `job_id`, waits for a random amount of time and writes back
 a tuple of `job_id` and the simulated time to the results channel. Finally all the `results` are
 printed out.
 
@@ -184,16 +184,16 @@ julia> function make_jobs(n)
 
 julia> n = 12;
 
-julia> @schedule make_jobs(n); # feed the jobs channel with "n" jobs
+julia> @async make_jobs(n); # feed the jobs channel with "n" jobs
 
 julia> for i in 1:4 # start 4 tasks to process requests in parallel
-           @schedule do_work()
+           @async do_work()
        end
 
 julia> @elapsed while n > 0 # print out results
            job_id, exec_time = take!(results)
-           println("$job_id finished in $(round(exec_time,2)) seconds")
-           n = n - 1
+           println("$job_id finished in $(round(exec_time; digits=2)) seconds")
+           global n = n - 1
        end
 4 finished in 0.22 seconds
 3 finished in 0.45 seconds
@@ -465,7 +465,7 @@ julia> function g_fix(r)
 g_fix (generic function with 1 method)
 
 julia>  r = let m = MersenneTwister(1)
-                [m; accumulate(Future.randjump, m, fill(big(10)^20, nthreads()-1))]
+                [m; accumulate(Future.randjump, fill(big(10)^20, nthreads()-1), init=m)]
             end;
 
 julia> g_fix(r)
@@ -1086,7 +1086,7 @@ julia> for p in workers() # start tasks on the workers to process requests in pa
 
 julia> @elapsed while n > 0 # print out results
            job_id, exec_time, where = take!(results)
-           println("$job_id finished in $(round(exec_time,2)) seconds on worker $where")
+           println("$job_id finished in $(round(exec_time; digits=2)) seconds on worker $where")
            n = n - 1
        end
 1 finished in 0.18 seconds on worker 4
@@ -1595,7 +1595,7 @@ requirements for the inbuilt `LocalManager` and `SSHManager`:
     running the Julia REPL (i.e., the master) with the rest of the cluster on the cloud, say on Amazon
     EC2. In this case only port 22 needs to be opened at the remote cluster coupled with SSH client
     authenticated via public key infrastructure (PKI). Authentication credentials can be supplied
-    via `sshflags`, for example ```sshflags=`-e <keyfile>` ```.
+    via `sshflags`, for example ```sshflags=`-i <keyfile>` ```.
 
     In an all-to-all topology (the default), all workers connect to each other via plain TCP sockets.
     The security policy on the cluster nodes must thus ensure free connectivity between workers for
@@ -1649,13 +1649,13 @@ in future releases.
 Outside of Julia parallelism there are plenty of external packages that should be mentioned.
 For example [MPI.jl](https://github.com/JuliaParallel/MPI.jl) is a Julia wrapper for the `MPI` protocol, or
 [DistributedArrays.jl](https://github.com/JuliaParallel/Distributedarrays.jl), as presented in [Shared Arrays](@ref).
-A mention must be done to the Julia's GPU programming ecosystem, which includes :
+A mention must be made of Julia's GPU programming ecosystem, which includes:
 
 1. Low-level (C kernel) based operations [OpenCL.jl](https://github.com/JuliaGPU/OpenCL.jl) and [CUDAdrv.jl](https://github.com/JuliaGPU/CUDAdrv.jl) which are respectively an OpenCL interface and a CUDA wrapper.
 
 2. Low-level (Julia Kernel) interfaces like [CUDAnative.jl](https://github.com/JuliaGPU/CUDAnative.jl) which is a Julia native CUDA implementation.
 
-3. High-level vendor specific abstractions like [CuArrays.jl](https://github.com/JuliaGPU/CuArrays.jl) and [CLArrays.jl](https://github.com/JuliaGPU/CLArrays.jl)
+3. High-level vendor-specific abstractions like [CuArrays.jl](https://github.com/JuliaGPU/CuArrays.jl) and [CLArrays.jl](https://github.com/JuliaGPU/CLArrays.jl)
 
 4. High-level libraries like [ArrayFire.jl](https://github.com/JuliaComputing/ArrayFire.jl) and [GPUArrays.jl](https://github.com/JuliaGPU/GPUArrays.jl)
 
@@ -1727,7 +1727,7 @@ function power_method(M, v)
 end
 ```
 
-`power_method` repeteavely creates a new vector and normalizes it. We have not specified any type signature in
+`power_method` repeatedly creates a new vector and normalizes it. We have not specified any type signature in
 function declaration, let's see if it works with the aforementioned datatypes:
 
 ```julia-repl
@@ -1792,10 +1792,10 @@ mpirun -np 4 ./julia example.jl
 ```
 
 [^1]:
-    in this context, mpi refers to the mpi-1 standard. beginning with mpi-2, the mpi standards committee
-    introduced a new set of communication mechanisms, collectively referred to as remote memory access
-    (rma). the motivation for adding rma to the mpi standard was to facilitate one-sided communication
-    patterns. for additional information on the latest mpi standard, see [http://mpi-forum.org/docs](http://mpi-forum.org/docs/).
+    In this context, MPI refers to the MPI-1 standard. Beginning with MPI-2, the MPI standards committee
+    introduced a new set of communication mechanisms, collectively referred to as Remote Memory Access
+    (RMA). The motivation for adding rma to the MPI standard was to facilitate one-sided communication
+    patterns. For additional information on the latest MPI standard, see [http://mpi-forum.org/docs](http://mpi-forum.org/docs/).
 
 [^2]:
     [Julia GPU man pages](http://juliagpu.github.io/CUDAnative.jl/stable/man/usage.html#Julia-support-1)
